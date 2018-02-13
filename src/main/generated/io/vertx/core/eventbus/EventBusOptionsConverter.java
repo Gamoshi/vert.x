@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 Red Hat, Inc.
+ * Copyright (c) 2014 Red Hat, Inc. and others
  *
  * Red Hat licenses this file to you under the Apache License, version 2.0
  * (the "License"); you may not use this file except in compliance with the
@@ -24,9 +24,9 @@ import io.vertx.core.json.JsonArray;
  *
  * NOTE: This class has been automatically generated from the {@link io.vertx.core.eventbus.EventBusOptions} original class using Vert.x codegen.
  */
-public class EventBusOptionsConverter {
+ class EventBusOptionsConverter {
 
-  public static void fromJson(JsonObject json, EventBusOptions obj) {
+   static void fromJson(JsonObject json, EventBusOptions obj) {
     if (json.getValue("acceptBacklog") instanceof Number) {
       obj.setAcceptBacklog(((Number)json.getValue("acceptBacklog")).intValue());
     }
@@ -70,10 +70,12 @@ public class EventBusOptionsConverter {
       });
     }
     if (json.getValue("enabledSecureTransportProtocols") instanceof JsonArray) {
-      json.getJsonArray("enabledSecureTransportProtocols").forEach(item -> {
+      java.util.LinkedHashSet<java.lang.String> list = new java.util.LinkedHashSet<>();
+      json.getJsonArray("enabledSecureTransportProtocols").forEach( item -> {
         if (item instanceof String)
-          obj.addEnabledSecureTransportProtocol((String)item);
+          list.add((String)item);
       });
+      obj.setEnabledSecureTransportProtocols(list);
     }
     if (json.getValue("host") instanceof String) {
       obj.setHost((String)json.getValue("host"));
@@ -81,8 +83,17 @@ public class EventBusOptionsConverter {
     if (json.getValue("idleTimeout") instanceof Number) {
       obj.setIdleTimeout(((Number)json.getValue("idleTimeout")).intValue());
     }
+    if (json.getValue("jdkSslEngineOptions") instanceof JsonObject) {
+      obj.setJdkSslEngineOptions(new io.vertx.core.net.JdkSSLEngineOptions((JsonObject)json.getValue("jdkSslEngineOptions")));
+    }
     if (json.getValue("keyStoreOptions") instanceof JsonObject) {
       obj.setKeyStoreOptions(new io.vertx.core.net.JksOptions((JsonObject)json.getValue("keyStoreOptions")));
+    }
+    if (json.getValue("logActivity") instanceof Boolean) {
+      obj.setLogActivity((Boolean)json.getValue("logActivity"));
+    }
+    if (json.getValue("openSslEngineOptions") instanceof JsonObject) {
+      obj.setOpenSslEngineOptions(new io.vertx.core.net.OpenSSLEngineOptions((JsonObject)json.getValue("openSslEngineOptions")));
     }
     if (json.getValue("pemKeyCertOptions") instanceof JsonObject) {
       obj.setPemKeyCertOptions(new io.vertx.core.net.PemKeyCertOptions((JsonObject)json.getValue("pemKeyCertOptions")));
@@ -111,6 +122,9 @@ public class EventBusOptionsConverter {
     if (json.getValue("reuseAddress") instanceof Boolean) {
       obj.setReuseAddress((Boolean)json.getValue("reuseAddress"));
     }
+    if (json.getValue("reusePort") instanceof Boolean) {
+      obj.setReusePort((Boolean)json.getValue("reusePort"));
+    }
     if (json.getValue("sendBufferSize") instanceof Number) {
       obj.setSendBufferSize(((Number)json.getValue("sendBufferSize")).intValue());
     }
@@ -120,14 +134,20 @@ public class EventBusOptionsConverter {
     if (json.getValue("ssl") instanceof Boolean) {
       obj.setSsl((Boolean)json.getValue("ssl"));
     }
-    if (json.getValue("sslEngine") instanceof String) {
-      obj.setSslEngine(io.vertx.core.net.SSLEngine.valueOf((String)json.getValue("sslEngine")));
+    if (json.getValue("tcpCork") instanceof Boolean) {
+      obj.setTcpCork((Boolean)json.getValue("tcpCork"));
+    }
+    if (json.getValue("tcpFastOpen") instanceof Boolean) {
+      obj.setTcpFastOpen((Boolean)json.getValue("tcpFastOpen"));
     }
     if (json.getValue("tcpKeepAlive") instanceof Boolean) {
       obj.setTcpKeepAlive((Boolean)json.getValue("tcpKeepAlive"));
     }
     if (json.getValue("tcpNoDelay") instanceof Boolean) {
       obj.setTcpNoDelay((Boolean)json.getValue("tcpNoDelay"));
+    }
+    if (json.getValue("tcpQuickAck") instanceof Boolean) {
+      obj.setTcpQuickAck((Boolean)json.getValue("tcpQuickAck"));
     }
     if (json.getValue("trafficClass") instanceof Number) {
       obj.setTrafficClass(((Number)json.getValue("trafficClass")).intValue());
@@ -146,7 +166,7 @@ public class EventBusOptionsConverter {
     }
   }
 
-  public static void toJson(EventBusOptions obj, JsonObject json) {
+   static void toJson(EventBusOptions obj, JsonObject json) {
     json.put("acceptBacklog", obj.getAcceptBacklog());
     if (obj.getClientAuth() != null) {
       json.put("clientAuth", obj.getClientAuth().name());
@@ -160,52 +180,70 @@ public class EventBusOptionsConverter {
     json.put("clustered", obj.isClustered());
     json.put("connectTimeout", obj.getConnectTimeout());
     if (obj.getCrlPaths() != null) {
-      json.put("crlPaths", new JsonArray(
-          obj.getCrlPaths().
-              stream().
-              map(item -> item).
-              collect(java.util.stream.Collectors.toList())));
+      JsonArray array = new JsonArray();
+      obj.getCrlPaths().forEach(item -> array.add(item));
+      json.put("crlPaths", array);
     }
     if (obj.getCrlValues() != null) {
-      json.put("crlValues", new JsonArray(
-          obj.getCrlValues().
-              stream().
-              map(item -> item.getBytes()).
-              collect(java.util.stream.Collectors.toList())));
+      JsonArray array = new JsonArray();
+      obj.getCrlValues().forEach(item -> array.add(item.getBytes()));
+      json.put("crlValues", array);
     }
     if (obj.getEnabledCipherSuites() != null) {
-      json.put("enabledCipherSuites", new JsonArray(
-          obj.getEnabledCipherSuites().
-              stream().
-              map(item -> item).
-              collect(java.util.stream.Collectors.toList())));
+      JsonArray array = new JsonArray();
+      obj.getEnabledCipherSuites().forEach(item -> array.add(item));
+      json.put("enabledCipherSuites", array);
     }
     if (obj.getEnabledSecureTransportProtocols() != null) {
-      json.put("enabledSecureTransportProtocols", new JsonArray(
-          obj.getEnabledSecureTransportProtocols().
-              stream().
-              map(item -> item).
-              collect(java.util.stream.Collectors.toList())));
+      JsonArray array = new JsonArray();
+      obj.getEnabledSecureTransportProtocols().forEach(item -> array.add(item));
+      json.put("enabledSecureTransportProtocols", array);
     }
     if (obj.getHost() != null) {
       json.put("host", obj.getHost());
     }
     json.put("idleTimeout", obj.getIdleTimeout());
+    if (obj.getJdkSslEngineOptions() != null) {
+      json.put("jdkSslEngineOptions", obj.getJdkSslEngineOptions().toJson());
+    }
+    if (obj.getKeyStoreOptions() != null) {
+      json.put("keyStoreOptions", obj.getKeyStoreOptions().toJson());
+    }
+    json.put("logActivity", obj.getLogActivity());
+    if (obj.getOpenSslEngineOptions() != null) {
+      json.put("openSslEngineOptions", obj.getOpenSslEngineOptions().toJson());
+    }
+    if (obj.getPemKeyCertOptions() != null) {
+      json.put("pemKeyCertOptions", obj.getPemKeyCertOptions().toJson());
+    }
+    if (obj.getPemTrustOptions() != null) {
+      json.put("pemTrustOptions", obj.getPemTrustOptions().toJson());
+    }
+    if (obj.getPfxKeyCertOptions() != null) {
+      json.put("pfxKeyCertOptions", obj.getPfxKeyCertOptions().toJson());
+    }
+    if (obj.getPfxTrustOptions() != null) {
+      json.put("pfxTrustOptions", obj.getPfxTrustOptions().toJson());
+    }
     json.put("port", obj.getPort());
     json.put("receiveBufferSize", obj.getReceiveBufferSize());
     json.put("reconnectAttempts", obj.getReconnectAttempts());
     json.put("reconnectInterval", obj.getReconnectInterval());
     json.put("reuseAddress", obj.isReuseAddress());
+    json.put("reusePort", obj.isReusePort());
     json.put("sendBufferSize", obj.getSendBufferSize());
     json.put("soLinger", obj.getSoLinger());
     json.put("ssl", obj.isSsl());
-    if (obj.getSslEngine() != null) {
-      json.put("sslEngine", obj.getSslEngine().name());
-    }
+    json.put("tcpCork", obj.isTcpCork());
+    json.put("tcpFastOpen", obj.isTcpFastOpen());
     json.put("tcpKeepAlive", obj.isTcpKeepAlive());
     json.put("tcpNoDelay", obj.isTcpNoDelay());
+    json.put("tcpQuickAck", obj.isTcpQuickAck());
     json.put("trafficClass", obj.getTrafficClass());
     json.put("trustAll", obj.isTrustAll());
+    if (obj.getTrustStoreOptions() != null) {
+      json.put("trustStoreOptions", obj.getTrustStoreOptions().toJson());
+    }
     json.put("useAlpn", obj.isUseAlpn());
     json.put("usePooledBuffers", obj.isUsePooledBuffers());
   }

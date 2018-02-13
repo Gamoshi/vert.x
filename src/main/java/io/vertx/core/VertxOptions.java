@@ -1,42 +1,40 @@
 /*
- * Copyright (c) 2011-2014 The original author or authors
- * ------------------------------------------------------
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *     The Eclipse Public License is available at
- *     http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *     The Apache License v2.0 is available at
- *     http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.core;
 
 import io.vertx.codegen.annotations.DataObject;
-import io.vertx.core.dns.HostnameResolverOptions;
+import io.vertx.core.dns.AddressResolverOptions;
 import io.vertx.core.eventbus.EventBusOptions;
+import io.vertx.core.impl.cpu.CpuCoreSensor;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.metrics.MetricsOptions;
 import io.vertx.core.spi.cluster.ClusterManager;
 
 import java.util.Objects;
 
+import static io.vertx.core.impl.FileResolver.DISABLE_FILE_CACHING_PROP_NAME;
+
 /**
  * Instances of this class are used to configure {@link io.vertx.core.Vertx} instances.
  *
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
-@DataObject(generateConverter = true)
+@DataObject(generateConverter = true, publicConverter = false)
 public class VertxOptions {
 
   /**
    * The default number of event loop threads to be used  = 2 * number of cores on the machine
    */
-  public static final int DEFAULT_EVENT_LOOP_POOL_SIZE = 2 * Runtime.getRuntime().availableProcessors();
+  public static final int DEFAULT_EVENT_LOOP_POOL_SIZE = 2 * CpuCoreSensor.availableProcessors();
 
   /**
    * The default number of threads in the worker pool = 20
@@ -114,6 +112,16 @@ public class VertxOptions {
   public static final boolean DEFAULT_HA_ENABLED = false;
 
   /**
+   * The default value for file resolver caching enabled = the value of the system property "vertx.disableFileCaching" or true
+   */
+  public static final boolean DEFAULT_FILE_CACHING_ENABLED = !Boolean.getBoolean(DISABLE_FILE_CACHING_PROP_NAME);
+
+  /**
+   * The default value for preferring native transport = false
+   */
+  public static final boolean DEFAULT_PREFER_NATIVE_TRANSPORT = false;
+
+  /**
    * The default value of warning exception time 5000000000 ns (5 seconds)
    * If a thread is blocked longer than this threshold, the warning log
    * contains a stack trace
@@ -123,8 +131,6 @@ public class VertxOptions {
   private int eventLoopPoolSize = DEFAULT_EVENT_LOOP_POOL_SIZE;
   private int workerPoolSize = DEFAULT_WORKER_POOL_SIZE;
   private int internalBlockingPoolSize = DEFAULT_INTERNAL_BLOCKING_POOL_SIZE;
-
-
   private long blockedThreadCheckInterval = DEFAULT_BLOCKED_THREAD_CHECK_INTERVAL;
   private long maxEventLoopExecuteTime = DEFAULT_MAX_EVENT_LOOP_EXECUTE_TIME;
   private long maxWorkerExecuteTime = DEFAULT_MAX_WORKER_EXECUTE_TIME;
@@ -132,10 +138,12 @@ public class VertxOptions {
   private boolean haEnabled = DEFAULT_HA_ENABLED;
   private int quorumSize = DEFAULT_QUORUM_SIZE;
   private String haGroup = DEFAULT_HA_GROUP;
-  private MetricsOptions metrics = new MetricsOptions();
+  private MetricsOptions metricsOptions = new MetricsOptions();
   private long warningExceptionTime = DEFAULT_WARNING_EXCEPTION_TIME;
   private EventBusOptions eventBusOptions = new EventBusOptions();
-  private HostnameResolverOptions hostnameResolverOptions = new HostnameResolverOptions();
+  private AddressResolverOptions addressResolverOptions = new AddressResolverOptions();
+  private boolean fileResolverCachingEnabled = DEFAULT_FILE_CACHING_ENABLED;
+  private boolean preferNativeTransport = DEFAULT_PREFER_NATIVE_TRANSPORT;
 
   /**
    * Default constructor
@@ -159,10 +167,11 @@ public class VertxOptions {
     this.haEnabled = other.isHAEnabled();
     this.quorumSize = other.getQuorumSize();
     this.haGroup = other.getHAGroup();
-    this.metrics = other.getMetricsOptions() != null ? new MetricsOptions(other.getMetricsOptions()) : null;
+    this.metricsOptions = other.getMetricsOptions() != null ? new MetricsOptions(other.getMetricsOptions()) : null;
     this.warningExceptionTime = other.warningExceptionTime;
     this.eventBusOptions = new EventBusOptions(other.eventBusOptions);
-    this.hostnameResolverOptions = other.hostnameResolverOptions != null ? new HostnameResolverOptions() : null;
+    this.addressResolverOptions = other.addressResolverOptions != null ? new AddressResolverOptions() : null;
+    this.fileResolverCachingEnabled = other.fileResolverCachingEnabled;
   }
 
   /**
@@ -404,7 +413,7 @@ public class VertxOptions {
    * This can be used to detect where the user is blocking an event loop thread, contrary to the Golden Rule of the
    * holy Event Loop.
    *
-   * @return the value of max event loop execute time, in ms.
+   * @return the value of max event loop execute time, in ns.
    */
   public long getMaxEventLoopExecuteTime() {
     return maxEventLoopExecuteTime;
@@ -413,7 +422,7 @@ public class VertxOptions {
   /**
    * Sets the value of max event loop execute time, in ns.
    *
-   * @param maxEventLoopExecuteTime the value of max event loop execute time, in ms.
+   * @param maxEventLoopExecuteTime the value of max event loop execute time, in ns.
    * @return a reference to this, so the API can be used fluently
    */
   public VertxOptions setMaxEventLoopExecuteTime(long maxEventLoopExecuteTime) {
@@ -432,7 +441,7 @@ public class VertxOptions {
    * This can be used to detect where the user is blocking a worker thread for too long. Although worker threads
    * can be blocked longer than event loop threads, they shouldn't be blocked for long periods of time.
    *
-   * @return The value of max worker execute time, in ms.
+   * @return The value of max worker execute time, in ns.
    */
   public long getMaxWorkerExecuteTime() {
     return maxWorkerExecuteTime;
@@ -441,7 +450,7 @@ public class VertxOptions {
   /**
    * Sets the value of max worker execute time, in ns.
    *
-   * @param maxWorkerExecuteTime the value of max worker execute time, in ms.
+   * @param maxWorkerExecuteTime the value of max worker execute time, in ns.
    * @return a reference to this, so the API can be used fluently
    */
   public VertxOptions setMaxWorkerExecuteTime(long maxWorkerExecuteTime) {
@@ -574,7 +583,7 @@ public class VertxOptions {
    * @return the metrics options
    */
   public MetricsOptions getMetricsOptions() {
-    return metrics;
+    return metricsOptions;
   }
 
   /**
@@ -584,7 +593,7 @@ public class VertxOptions {
    * @return a reference to this, so the API can be used fluently
    */
   public VertxOptions setMetricsOptions(MetricsOptions metrics) {
-    this.metrics = metrics;
+    this.metricsOptions = metrics;
     return this;
   }
 
@@ -631,20 +640,56 @@ public class VertxOptions {
   }
 
   /**
-   * @return the hostname resolver options to configure resolving DNS servers, cache TTL, etc...
+   * @return the address resolver options to configure resolving DNS servers, cache TTL, etc...
    */
-  public HostnameResolverOptions getHostnameResolverOptions() {
-    return hostnameResolverOptions;
+  public AddressResolverOptions getAddressResolverOptions() {
+    return addressResolverOptions;
   }
 
   /**
-   * Sets the hostname resolver configuration to configure resolving DNS servers, cache TTL, etc...
+   * Sets the address resolver configuration to configure resolving DNS servers, cache TTL, etc...
    *
-   * @param hostnameResolverOptions the hostname resolver options
+   * @param addressResolverOptions the address resolver options
    * @return a reference to this, so the API can be used fluently
    */
-  public VertxOptions setHostnameResolverOptions(HostnameResolverOptions hostnameResolverOptions) {
-    this.hostnameResolverOptions = hostnameResolverOptions;
+  public VertxOptions setAddressResolverOptions(AddressResolverOptions addressResolverOptions) {
+    this.addressResolverOptions = addressResolverOptions;
+    return this;
+  }
+
+  /**
+   * @return wether the file resolver uses caching
+   */
+  public boolean isFileResolverCachingEnabled() {
+    return fileResolverCachingEnabled;
+  }
+
+  /**
+   * Set wether the Vert.x file resolver uses caching for classpath resources.
+   *
+   * @param fileResolverCachingEnabled true when the file resolver caches resources
+   * @return a reference to this, so the API can be used fluently
+   */
+  public VertxOptions setFileResolverCachingEnabled(boolean fileResolverCachingEnabled) {
+    this.fileResolverCachingEnabled = fileResolverCachingEnabled;
+    return this;
+  }
+
+  /**
+   * @return wether to prefer the native transport to the JDK transport
+   */
+  public boolean getPreferNativeTransport() {
+    return preferNativeTransport;
+  }
+
+  /**
+   * Set wether to prefer the native transport to the JDK transport.
+   *
+   * @param preferNativeTransport {@code true} to prefer the native transport
+   * @return a reference to this, so the API can be used fluently
+   */
+  public VertxOptions setPreferNativeTransport(boolean preferNativeTransport) {
+    this.preferNativeTransport = preferNativeTransport;
     return this;
   }
 
@@ -669,10 +714,11 @@ public class VertxOptions {
     if (haGroup != null ? !haGroup.equals(that.haGroup) : that.haGroup != null) return false;
     if (eventBusOptions != null ? !eventBusOptions.equals(that.eventBusOptions) : that.eventBusOptions != null)
       return false;
-    if (hostnameResolverOptions != null ? !hostnameResolverOptions.equals(that.hostnameResolverOptions) : that.hostnameResolverOptions != null)
+    if (addressResolverOptions != null ? !addressResolverOptions.equals(that.addressResolverOptions) : that.addressResolverOptions != null)
       return false;
-    return !(metrics != null ? !metrics.equals(that.metrics) : that.metrics != null);
-
+    if (fileResolverCachingEnabled != that.fileResolverCachingEnabled) return false;
+    if (preferNativeTransport != that.preferNativeTransport) return false;
+    return !(metricsOptions != null ? !metricsOptions.equals(that.metricsOptions) : that.metricsOptions != null);
   }
 
   @Override
@@ -685,11 +731,13 @@ public class VertxOptions {
     result = 31 * result + (int) (maxWorkerExecuteTime ^ (maxWorkerExecuteTime >>> 32));
     result = 31 * result + (clusterManager != null ? clusterManager.hashCode() : 0);
     result = 31 * result + (haEnabled ? 1 : 0);
+    result = 31 * result + (fileResolverCachingEnabled ? 1 : 0);
+    result = 31 * result + (preferNativeTransport ? 1 : 0);
     result = 31 * result + quorumSize;
     result = 31 * result + (haGroup != null ? haGroup.hashCode() : 0);
-    result = 31 * result + (metrics != null ? metrics.hashCode() : 0);
+    result = 31 * result + (metricsOptions != null ? metricsOptions.hashCode() : 0);
     result = 31 * result + (eventBusOptions != null ? eventBusOptions.hashCode() : 0);
-    result = 31 * result + (hostnameResolverOptions != null ? hostnameResolverOptions.hashCode() : 0);
+    result = 31 * result + (addressResolverOptions != null ? addressResolverOptions.hashCode() : 0);
     result = 31 * result + (int) (warningExceptionTime ^ (warningExceptionTime >>> 32));
     return result;
   }
@@ -705,10 +753,13 @@ public class VertxOptions {
         ", maxWorkerExecuteTime=" + maxWorkerExecuteTime +
         ", clusterManager=" + clusterManager +
         ", haEnabled=" + haEnabled +
+        ", fileCachingEnabled=" + fileResolverCachingEnabled +
+        ", preferNativeTransport=" + preferNativeTransport +
         ", quorumSize=" + quorumSize +
         ", haGroup='" + haGroup + '\'' +
-        ", metrics=" + metrics +
-        ", hostnameResolver=" + hostnameResolverOptions.toJson() +
+        ", metrics=" + metricsOptions +
+        ", addressResolver=" + addressResolverOptions.toJson() +
+        ", addressResolver=" + addressResolverOptions.toJson() +
         ", eventbus=" + eventBusOptions.toJson() +
         ", warningExceptionTime=" + warningExceptionTime +
         '}';

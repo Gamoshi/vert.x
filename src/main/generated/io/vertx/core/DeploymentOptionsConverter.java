@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 Red Hat, Inc.
+ * Copyright (c) 2014 Red Hat, Inc. and others
  *
  * Red Hat licenses this file to you under the Apache License, version 2.0
  * (the "License"); you may not use this file except in compliance with the
@@ -24,9 +24,9 @@ import io.vertx.core.json.JsonArray;
  *
  * NOTE: This class has been automatically generated from the {@link io.vertx.core.DeploymentOptions} original class using Vert.x codegen.
  */
-public class DeploymentOptionsConverter {
+ class DeploymentOptionsConverter {
 
-  public static void fromJson(JsonObject json, DeploymentOptions obj) {
+   static void fromJson(JsonObject json, DeploymentOptions obj) {
     if (json.getValue("config") instanceof JsonObject) {
       obj.setConfig(((JsonObject)json.getValue("config")).copy());
     }
@@ -55,38 +55,48 @@ public class DeploymentOptionsConverter {
     if (json.getValue("isolationGroup") instanceof String) {
       obj.setIsolationGroup((String)json.getValue("isolationGroup"));
     }
+    if (json.getValue("maxWorkerExecuteTime") instanceof Number) {
+      obj.setMaxWorkerExecuteTime(((Number)json.getValue("maxWorkerExecuteTime")).longValue());
+    }
     if (json.getValue("multiThreaded") instanceof Boolean) {
       obj.setMultiThreaded((Boolean)json.getValue("multiThreaded"));
     }
     if (json.getValue("worker") instanceof Boolean) {
       obj.setWorker((Boolean)json.getValue("worker"));
     }
+    if (json.getValue("workerPoolName") instanceof String) {
+      obj.setWorkerPoolName((String)json.getValue("workerPoolName"));
+    }
+    if (json.getValue("workerPoolSize") instanceof Number) {
+      obj.setWorkerPoolSize(((Number)json.getValue("workerPoolSize")).intValue());
+    }
   }
 
-  public static void toJson(DeploymentOptions obj, JsonObject json) {
+   static void toJson(DeploymentOptions obj, JsonObject json) {
     if (obj.getConfig() != null) {
       json.put("config", obj.getConfig());
     }
     if (obj.getExtraClasspath() != null) {
-      json.put("extraClasspath", new JsonArray(
-          obj.getExtraClasspath().
-              stream().
-              map(item -> item).
-              collect(java.util.stream.Collectors.toList())));
+      JsonArray array = new JsonArray();
+      obj.getExtraClasspath().forEach(item -> array.add(item));
+      json.put("extraClasspath", array);
     }
     json.put("ha", obj.isHa());
     json.put("instances", obj.getInstances());
     if (obj.getIsolatedClasses() != null) {
-      json.put("isolatedClasses", new JsonArray(
-          obj.getIsolatedClasses().
-              stream().
-              map(item -> item).
-              collect(java.util.stream.Collectors.toList())));
+      JsonArray array = new JsonArray();
+      obj.getIsolatedClasses().forEach(item -> array.add(item));
+      json.put("isolatedClasses", array);
     }
     if (obj.getIsolationGroup() != null) {
       json.put("isolationGroup", obj.getIsolationGroup());
     }
+    json.put("maxWorkerExecuteTime", obj.getMaxWorkerExecuteTime());
     json.put("multiThreaded", obj.isMultiThreaded());
     json.put("worker", obj.isWorker());
+    if (obj.getWorkerPoolName() != null) {
+      json.put("workerPoolName", obj.getWorkerPoolName());
+    }
+    json.put("workerPoolSize", obj.getWorkerPoolSize());
   }
 }

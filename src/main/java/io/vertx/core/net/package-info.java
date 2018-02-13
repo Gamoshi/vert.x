@@ -1,17 +1,12 @@
 /*
- * Copyright 2014 Red Hat, Inc.
+ * Copyright (c) 2014 Red Hat, Inc. and others
  *
- *  All rights reserved. This program and the accompanying materials
- *  are made available under the terms of the Eclipse Public License v1.0
- *  and Apache License v2.0 which accompanies this distribution.
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *  The Eclipse Public License is available at
- *  http://www.eclipse.org/legal/epl-v10.html
- *
- *  The Apache License v2.0 is available at
- *  http://www.opensource.org/licenses/apache2.0.php
- *
- *  You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 /**
@@ -135,6 +130,10 @@
  * You can set an {@link io.vertx.core.net.NetSocket#exceptionHandler(io.vertx.core.Handler)} to receive any
  * exceptions that happen on the socket.
  *
+ * You can set an {@link io.vertx.core.net.NetServer#exceptionHandler(io.vertx.core.Handler)} to receive any
+ * exceptions that happens before the connection is passed to the {@link io.vertx.core.net.NetServer#connectHandler(io.vertx.core.Handler)}
+ * , e.g during the TLS handshake.
+ *
  * === Event bus write handler
  *
  * Every socket automatically registers a handler on the event bus, and when any buffers are received in this handler,
@@ -156,8 +155,8 @@
  *
  * Files and classpath resources can be written to the socket directly using {@link io.vertx.core.net.NetSocket#sendFile}. This can be a very
  * efficient way to send files, as it can be handled by the OS kernel directly where supported by the operating system.
- * 
- * Please see the chapter about <<classpath, serving files from the classpath>> for restrictions of the 
+ *
+ * Please see the chapter about <<classpath, serving files from the classpath>> for restrictions of the
  * classpath resolution or disabling it.
  *
  * [source,$lang]
@@ -290,6 +289,31 @@
  *
  * By default, multiple connection attempts are disabled.
  *
+ * [[logging_network_activity]]
+ * === Logging network activity
+ *
+ * For debugging purposes, network activity can be logged:
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.NetExamples#exampleNetworkActivityLoggingOnServer}
+ * ----
+ *
+ * for the client
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.NetExamples#exampleNetworkActivityLoggingOnClient}
+ * ----
+ *
+ * Network activity is logged by Netty with the `DEBUG` level and with the `io.netty.handler.logging.LoggingHandler`
+ * name. When using network activity logging there are a few things to keep in mind:
+ *
+ * - logging is not performed by Vert.x logging but by Netty
+ * - this is *not* a production feature
+ *
+ * You should read the <<netty-logging>> section.
+ *
  * [[ssl]]
  * === Configuring servers and clients to work with SSL/TLS
  *
@@ -360,7 +384,9 @@
  * {@link examples.NetExamples#example22}
  * ----
  *
- * Keep in mind that pem configuration, the private key is not crypted.
+ * PKCS8, PKCS1 and X.509 certificates wrapped in a PEM block formats are supported.
+ *
+ * WARNING: keep in mind that pem configuration, the private key is not crypted.
  *
  * ==== Specifying trust for the server
  *
@@ -433,6 +459,15 @@
  *
  * If {@link io.vertx.core.net.ClientOptionsBase#setTrustAll trustAll} is not set then a client trust store must be
  * configured and should contain the certificates of the servers that the client trusts.
+ *
+ * By default, host verification is disabled on the client.
+ * To enable host verification, set the algorithm to use on your client (only HTTPS and LDAPS is currently supported):
+ *
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.NetExamples#example46}
+ * ----
  *
  * Likewise server configuration, the client trust can be configured in several ways:
  *
@@ -537,6 +572,35 @@
  *
  * Keep in mind that pem configuration, the private key is not crypted.
  *
+ * ==== Self-signed certificates for testing and development purposes
+ *
+ * CAUTION: Do not use this in production settings, and note that the generated keys are very insecure.
+ *
+ * It is very often the case that self-signed certificates are required, be it for unit / integration tests or for
+ * running a development version of an application.
+ *
+ * {@link io.vertx.core.net.SelfSignedCertificate} can be used to provide self-signed PEM certificate helpers and
+ * give {@link io.vertx.core.net.KeyCertOptions} and {@link io.vertx.core.net.TrustOptions} configurations:
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.NetExamples#example48}
+ * ----
+ *
+ * The client can also be configured to trust all certificates:
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.NetExamples#example49}
+ * ----
+ *
+ * Note that self-signed certificates also work for other TCP protocols like HTTPS:
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.NetExamples#example50}
+ * ----
+ *
  * ==== Revoking certificate authorities
  *
  * Trust can be configured to use a certificate revocation list (CRL) for revoked certificates that should no
@@ -579,33 +643,101 @@
  *
  * Protocol versions can be specified on the {@link io.vertx.core.net.NetServerOptions} or {@link io.vertx.core.net.NetClientOptions} configuration.
  *
- * ==== OpenSSL engine
+ * ==== SSL engine
  *
- * The default SSL/TLS engine implementation is provided by the JDK.
+ * The engine implementation can be configured to use https://www.openssl.org[OpenSSL] instead of the JDK implementation.
+ * OpenSSL provides better performances and CPU usage than the JDK engine, as well as JDK version independence.
  *
- * The engine implementation can be configured to use https://www.openssl.org[OpenSSL] instead. OpenSSL provides
- * better performances and CPU usage than the JDK engine, as well as JDK version independence.
+ * The engine options to use is
  *
- * OpenSSL requires to configure {@link io.vertx.core.net.TCPSSLOptions#setSslEngine} to {@link io.vertx.core.net.SSLEngine#OPENSSL}
- * and use http://netty.io/wiki/forked-tomcat-native.html[netty-tcnative] jar on the classpath. Using tcnative may require
- * OpenSSL to be installed on your OS depending on the tcnative implementation.
+ * - the {@link io.vertx.core.net.TCPSSLOptions#getSslEngineOptions()} options when it is set
+ * - otherwise {@link io.vertx.core.net.JdkSSLEngineOptions}
  *
- * OpenSSL restricts the key/certificate configuration to `.pem` files. However it is still possible to use any trust
- * configuration.
+ * [source,$lang]
+ * ----
+ * {@link examples.NetExamples#exampleSSLEngine}
+ * ----
  *
- * ==== Application-Layer Protocol Negotiation
+ * ==== Server Name Indication (SNI)
  *
- * ALPN is a TLS extension for applicationl layer protocol negotitation. It is used by HTTP/2: during the TLS handshake
- * the client gives the list of application protocols it accepts and the server responds with a protocol it supports.
+ * Server Name Indication (SNI) is a TLS extension by which a client specifies a hostname attempting to connect: during
+ * the TLS handshake the client gives a server name and the server can use it to respond with a specific certificate
+ * for this server name instead of the default deployed certificate.
+ * If the server requires client authentication the server can use a specific trusted CA certificate depending on the
+ * indicated server name.
+ *
+ * When SNI is active the server uses
+ *
+ * * the certificate CN or SAN DNS (Subject Alternative Name with DNS) to do an exact match, e.g `www.example.com`
+ * * the certificate CN or SAN DNS certificate to match a wildcard name, e.g `*.example.com`
+ * * otherwise the first certificate when the client does not present a server name or the presented server name cannot be matched
+ *
+ * When the server additionally requires client authentication:
+ *
+ * * if {@link io.vertx.core.net.JksOptions} were used to set the trust options
+ *  ({@link io.vertx.core.net.NetServerOptions#setTrustOptions options}) then an exact match with the trust store
+ *  alias is done
+ * * otherwise the available CA certificates are used in the same way as if no SNI is in place
+ *
+ * You can enable SNI on the server by setting {@link io.vertx.core.net.NetServerOptions#setSni(boolean)} to `true` and
+ * configured the server with multiple key/certificate pairs.
+ *
+ * Java KeyStore files or PKCS12 files can store multiple key/cert pairs out of the box.
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.NetExamples#configureSNIServer}
+ * ----
+ *
+ * {@link io.vertx.core.net.PemKeyCertOptions} can be configured to hold multiple entries:
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.NetExamples#configureSNIServerWithPems}
+ * ----
+ *
+ * The client implicitly sends the connecting host as an SNI server name for Fully Qualified Domain Name (FQDN).
+ *
+ * You can provide an explicit server name when connecting a socket
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.NetExamples#useSNIInClient}
+ * ----
+ *
+ * It can be used for different purposes:
+ *
+ * * present a server name different than the server host
+ * * present a server name while connecting to an IP
+ * * force to present a server name when using shortname
+ *
+ * ==== Application-Layer Protocol Negotiation (ALPN)
+ *
+ * Application-Layer Protocol Negotiation (ALPN) is a TLS extension for application layer protocol negotiation. It is used by
+ * HTTP/2: during the TLS handshake the client gives the list of application protocols it accepts and the server responds
+ * with a protocol it supports.
+ *
+ * If you are using Java 9, you are fine and you can use HTTP/2 out of the box without extra steps.
  *
  * Java 8 does not supports ALPN out of the box, so ALPN should be enabled by other means:
  *
  * - _OpenSSL_ support
  * - _Jetty-ALPN_ support
  *
+ * The engine options to use is
+ *
+ * - the {@link io.vertx.core.net.TCPSSLOptions#getSslEngineOptions()} options when it is set
+ * - {@link io.vertx.core.net.JdkSSLEngineOptions} when ALPN is available for JDK
+ * - {@link io.vertx.core.net.OpenSSLEngineOptions} when ALPN is available for OpenSSL
+ * - otherwise it fails
+ *
  * ===== OpenSSL ALPN support
  *
  * OpenSSL provides native ALPN support.
+ *
+ * OpenSSL requires to configure {@link io.vertx.core.net.TCPSSLOptions#setOpenSslEngineOptions(OpenSSLEngineOptions)}
+ * and use http://netty.io/wiki/forked-tomcat-native.html[netty-tcnative] jar on the classpath. Using tcnative may require
+ * OpenSSL to be installed on your OS depending on the tcnative implementation.
  *
  * ===== Jetty-ALPN support
  *
@@ -629,6 +761,23 @@
  * -javaagent:/path/to/alpn/agent
  * ----
  *
+ * === Using a proxy for client connections
+ *
+ * The {@link io.vertx.core.net.NetClient} supports either a HTTP/1.x _CONNECT_, _SOCKS4a_ or _SOCKS5_ proxy.
+ *
+ * The proxy can be configured in the {@link io.vertx.core.net.NetClientOptions} by setting a
+ * {@link io.vertx.core.net.ProxyOptions} object containing proxy type, hostname, port and optionally username and password.
+ *
+ * Here's an example:
+ *
+ * [source,$lang]
+ *
+ * ----
+ * {@link examples.NetExamples#example47}
+ * ----
+ *
+ * The DNS resolution is always done on the proxy server, to achieve the functionality of a SOCKS4 client, it is necessary
+ * to resolve the DNS address locally.
  */
 @Document(fileName = "net.adoc")
 package io.vertx.core.net;

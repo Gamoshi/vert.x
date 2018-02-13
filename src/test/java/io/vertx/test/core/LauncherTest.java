@@ -1,35 +1,33 @@
 /*
- * Copyright (c) 2011-2014 The original author or authors
- * ------------------------------------------------------
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *     The Eclipse Public License is available at
- *     http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *     The Apache License v2.0 is available at
- *     http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.test.core;
 
-import io.vertx.core.*;
+import io.vertx.core.DeploymentOptions;
+import io.vertx.core.Launcher;
+import io.vertx.core.Vertx;
+import io.vertx.core.VertxOptions;
 import io.vertx.core.impl.launcher.commands.HelloCommand;
 import io.vertx.core.impl.launcher.commands.RunCommand;
 import io.vertx.core.impl.launcher.commands.VersionCommand;
 import io.vertx.core.json.JsonObject;
-import io.vertx.core.metrics.MetricsOptions;
-import io.vertx.core.metrics.impl.DummyVertxMetrics;
-import io.vertx.core.spi.VertxMetricsFactory;
-import io.vertx.core.spi.metrics.VertxMetrics;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.InputStreamReader;
+import java.io.PrintStream;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -44,6 +42,7 @@ public class LauncherTest extends VertxTestBase {
   private String expectedVersion;
   private ByteArrayOutputStream out;
   private PrintStream stream;
+  private Vertx vertx;
 
   @Override
   public void setUp() throws Exception {
@@ -58,7 +57,7 @@ public class LauncherTest extends VertxTestBase {
       throw new IllegalStateException("Cannot find the vertx-version.txt");
     } else {
       BufferedReader in = new BufferedReader(
-          new InputStreamReader(resource.openStream()));
+        new InputStreamReader(resource.openStream()));
       expectedVersion = in.readLine();
       in.close();
     }
@@ -76,6 +75,10 @@ public class LauncherTest extends VertxTestBase {
 
     out.close();
     stream.close();
+
+    if (vertx != null) {
+      vertx.close();
+    }
   }
 
 
@@ -96,7 +99,7 @@ public class LauncherTest extends VertxTestBase {
     MyLauncher launcher = new MyLauncher();
     String[] args = {"run", "java:" + TestVerticle.class.getCanonicalName()};
     launcher.dispatch(args);
-    waitUntil(() -> TestVerticle.instanceCount.get() == 1);
+    assertWaitUntil(() -> TestVerticle.instanceCount.get() == 1);
     assertEquals(Arrays.asList(args), TestVerticle.processArgs);
     launcher.assertHooksInvoked();
   }
@@ -144,7 +147,7 @@ public class LauncherTest extends VertxTestBase {
     MyLauncher launcher = new MyLauncher();
     String[] args = {"run", "java:" + TestVerticle.class.getCanonicalName(), "-instances", String.valueOf(instances)};
     launcher.dispatch(args);
-    waitUntil(() -> TestVerticle.instanceCount.get() == instances);
+    assertWaitUntil(() -> TestVerticle.instanceCount.get() == instances);
     assertEquals(Arrays.asList(args), TestVerticle.processArgs);
     launcher.assertHooksInvoked();
   }
@@ -154,7 +157,7 @@ public class LauncherTest extends VertxTestBase {
     MyLauncher launcher = new MyLauncher();
     String[] args = {"run", "java:" + TestVerticle.class.getCanonicalName(), "-cluster"};
     launcher.dispatch(args);
-    waitUntil(() -> TestVerticle.instanceCount.get() == 1);
+    assertWaitUntil(() -> TestVerticle.instanceCount.get() == 1);
     assertEquals(Arrays.asList(args), TestVerticle.processArgs);
     launcher.assertHooksInvoked();
   }
@@ -164,7 +167,7 @@ public class LauncherTest extends VertxTestBase {
     MyLauncher launcher = new MyLauncher();
     String[] args = {"run", "java:" + TestVerticle.class.getCanonicalName(), "-ha"};
     launcher.dispatch(args);
-    waitUntil(() -> TestVerticle.instanceCount.get() == 1);
+    assertWaitUntil(() -> TestVerticle.instanceCount.get() == 1);
     assertEquals(Arrays.asList(args), TestVerticle.processArgs);
     launcher.assertHooksInvoked();
   }
@@ -182,8 +185,20 @@ public class LauncherTest extends VertxTestBase {
     Launcher launcher = new Launcher();
     String[] args = new String[0];
     launcher.dispatch(args);
-    waitUntil(() -> TestVerticle.instanceCount.get() == 1);
+    assertWaitUntil(() -> TestVerticle.instanceCount.get() == 1);
     assertEquals(Arrays.asList(args), TestVerticle.processArgs);
+
+    cleanup(launcher);
+  }
+
+  private void cleanup(Launcher launcher) {
+    RunCommand run = (RunCommand) launcher.getExistingCommandInstance("run");
+    if (run != null) {
+      Vertx v = run.vertx();
+      if (v != null) {
+        v.close();
+      }
+    }
   }
 
   @Test
@@ -199,8 +214,10 @@ public class LauncherTest extends VertxTestBase {
     Launcher launcher = new Launcher();
     String[] args = {"-cluster", "-worker", "-instances=10"};
     launcher.dispatch(args);
-    waitUntil(() -> TestVerticle.instanceCount.get() == 10);
+    assertWaitUntil(() -> TestVerticle.instanceCount.get() == 10);
     assertEquals(Arrays.asList(args), TestVerticle.processArgs);
+
+    cleanup(launcher);
   }
 
   @Test
@@ -217,7 +234,7 @@ public class LauncherTest extends VertxTestBase {
     HelloCommand.called = false;
     String[] args = {"--name=vert.x"};
     launcher.dispatch(args);
-    waitUntil(() -> HelloCommand.called);
+    assertWaitUntil(() -> HelloCommand.called);
   }
 
   @Test
@@ -234,7 +251,7 @@ public class LauncherTest extends VertxTestBase {
     HelloCommand.called = false;
     String[] args = {"--name=vert.x"};
     launcher.dispatch(args);
-    waitUntil(() -> HelloCommand.called);
+    assertWaitUntil(() -> HelloCommand.called);
   }
 
   @Test
@@ -249,8 +266,11 @@ public class LauncherTest extends VertxTestBase {
 
     HelloCommand.called = false;
     String[] args = {"run", TestVerticle.class.getName(), "--name=vert.x"};
-    Launcher.main(args);
-    waitUntil(() -> TestVerticle.instanceCount.get() == 1);
+    Launcher launcher = new Launcher();
+    launcher.dispatch(args);
+    assertWaitUntil(() -> TestVerticle.instanceCount.get() == 1);
+
+    cleanup(launcher);
   }
 
   @Test
@@ -264,8 +284,11 @@ public class LauncherTest extends VertxTestBase {
     Files.copy(manifest.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
 
     String[] args = {TestVerticle.class.getName()};
-    Launcher.main(args);
-    waitUntil(() -> TestVerticle.instanceCount.get() == 1);
+    Launcher launcher = new Launcher();
+    launcher.dispatch(args);
+    assertWaitUntil(() -> TestVerticle.instanceCount.get() == 1);
+
+    cleanup(launcher);
   }
 
 
@@ -274,7 +297,7 @@ public class LauncherTest extends VertxTestBase {
     MySecondLauncher launcher = new MySecondLauncher();
     String[] args = new String[0];
     launcher.dispatch(args);
-    waitUntil(() -> TestVerticle.instanceCount.get() == 1);
+    assertWaitUntil(() -> TestVerticle.instanceCount.get() == 1);
     assertEquals(Arrays.asList(args), TestVerticle.processArgs);
   }
 
@@ -283,7 +306,7 @@ public class LauncherTest extends VertxTestBase {
     MySecondLauncher launcher = new MySecondLauncher();
     String[] args = {"-cluster", "-worker"};
     launcher.dispatch(args);
-    waitUntil(() -> TestVerticle.instanceCount.get() == 1);
+    assertWaitUntil(() -> TestVerticle.instanceCount.get() == 1);
     assertEquals(Arrays.asList(args), TestVerticle.processArgs);
   }
 
@@ -362,7 +385,7 @@ public class LauncherTest extends VertxTestBase {
     JsonObject conf = new JsonObject().put("foo", "bar").put("wibble", 123);
     String[] args = {"run", "java:" + TestVerticle.class.getCanonicalName(), "-conf", conf.encode()};
     launcher.dispatch(args);
-    waitUntil(() -> TestVerticle.instanceCount.get() == 1);
+    assertWaitUntil(() -> TestVerticle.instanceCount.get() == 1);
     assertEquals(conf, TestVerticle.conf);
   }
 
@@ -379,7 +402,7 @@ public class LauncherTest extends VertxTestBase {
     Files.write(tempFile, conf.encode().getBytes());
     String[] args = {"run", "java:" + TestVerticle.class.getCanonicalName(), "-conf", tempFile.toString()};
     launcher.dispatch(args);
-    waitUntil(() -> TestVerticle.instanceCount.get() == 1);
+    assertWaitUntil(() -> TestVerticle.instanceCount.get() == 1);
     assertEquals(conf, TestVerticle.conf);
   }
 
@@ -404,12 +427,12 @@ public class LauncherTest extends VertxTestBase {
     MyLauncher launcher = new MyLauncher();
     String[] args;
     if (clustered) {
-      args = new String[] {"run", "java:" + TestVerticle.class.getCanonicalName(), "-cluster"};
+      args = new String[]{"run", "java:" + TestVerticle.class.getCanonicalName(), "-cluster"};
     } else {
-      args = new String[] {"run", "java:" + TestVerticle.class.getCanonicalName()};
+      args = new String[]{"run", "java:" + TestVerticle.class.getCanonicalName()};
     }
     launcher.dispatch(args);
-    waitUntil(() -> TestVerticle.instanceCount.get() == 1);
+    assertWaitUntil(() -> TestVerticle.instanceCount.get() == 1);
 
     VertxOptions opts = launcher.getVertxOptions();
 
@@ -435,30 +458,21 @@ public class LauncherTest extends VertxTestBase {
 
   @Test
   public void testCustomMetricsOptions() throws Exception {
+    System.setProperty(RunCommand.METRICS_OPTIONS_PROP_PREFIX + "enabled", "true");
+    System.setProperty(RunCommand.METRICS_OPTIONS_PROP_PREFIX + "customProperty", "customPropertyValue");
+    MyLauncher launcher = new MyLauncher();
+    String[] args = {"run", "java:" + TestVerticle.class.getCanonicalName()};
+    ClassLoader oldCL = Thread.currentThread().getContextClassLoader();
+    Thread.currentThread().setContextClassLoader(MetricsOptionsTest.createMetricsFromMetaInfLoader("io.vertx.test.core.CustomMetricsFactory"));
     try {
-      ConfigurableMetricsFactory.delegate = new VertxMetricsFactory() {
-        @Override
-        public VertxMetrics metrics(Vertx vertx, VertxOptions options) {
-          return new DummyVertxMetrics();
-        }
-
-        @Override
-        public MetricsOptions newOptions() {
-          return new CustomMetricsOptions();
-        }
-      };
-      System.setProperty(RunCommand.METRICS_OPTIONS_PROP_PREFIX + "enabled", "true");
-      System.setProperty(RunCommand.METRICS_OPTIONS_PROP_PREFIX + "customProperty", "customPropertyValue");
-      MyLauncher launcher = new MyLauncher();
-      String[] args = {"run", "java:" + TestVerticle.class.getCanonicalName()};
       launcher.dispatch(args);
-      waitUntil(() -> TestVerticle.instanceCount.get() == 1);
-      VertxOptions opts = launcher.getVertxOptions();
-      CustomMetricsOptions custom = (CustomMetricsOptions) opts.getMetricsOptions();
-      assertEquals("customPropertyValue", custom.getCustomProperty());
     } finally {
-      ConfigurableMetricsFactory.delegate = null;
+      Thread.currentThread().setContextClassLoader(oldCL);
     }
+    assertWaitUntil(() -> TestVerticle.instanceCount.get() == 1);
+    VertxOptions opts = launcher.getVertxOptions();
+    CustomMetricsOptions custom = (CustomMetricsOptions) opts.getMetricsOptions();
+    assertEquals("customPropertyValue", custom.getCustomProperty());
   }
 
   @Test
@@ -471,7 +485,7 @@ public class LauncherTest extends VertxTestBase {
     MyLauncher launcher = new MyLauncher();
     String[] args = {"run", "java:" + TestVerticle.class.getCanonicalName()};
     launcher.dispatch(args);
-    waitUntil(() -> TestVerticle.instanceCount.get() == 1);
+    assertWaitUntil(() -> TestVerticle.instanceCount.get() == 1);
 
     VertxOptions opts = launcher.getVertxOptions();
     VertxOptions def = new VertxOptions();
@@ -489,9 +503,9 @@ public class LauncherTest extends VertxTestBase {
     // Should be ignored
 
     MyLauncher launcher = new MyLauncher();
-    String[] args =  {"run", "java:" + TestVerticle.class.getCanonicalName()};
+    String[] args = {"run", "java:" + TestVerticle.class.getCanonicalName()};
     launcher.dispatch(args);
-    waitUntil(() -> TestVerticle.instanceCount.get() == 1);
+    assertWaitUntil(() -> TestVerticle.instanceCount.get() == 1);
 
     VertxOptions opts = launcher.getVertxOptions();
     VertxOptions def = new VertxOptions();
@@ -505,23 +519,91 @@ public class LauncherTest extends VertxTestBase {
   public void testWhenPassingTheMainObject() throws Exception {
     MyLauncher launcher = new MyLauncher();
     int instances = 10;
-    launcher.dispatch(launcher, new String[] {"run", "java:" + TestVerticle.class.getCanonicalName(),
-        "-instances", "10"});
-    waitUntil(() -> TestVerticle.instanceCount.get() == instances);
+    launcher.dispatch(launcher, new String[]{"run", "java:" + TestVerticle.class.getCanonicalName(),
+      "-instances", "10"});
+    assertWaitUntil(() -> TestVerticle.instanceCount.get() == instances);
   }
 
   @Test
   public void testBare() throws Exception {
     MyLauncher launcher = new MyLauncher();
-    launcher.dispatch(new String[] {"bare"});
-    waitUntil(() -> launcher.afterStartingVertxInvoked);
+    launcher.dispatch(new String[]{"bare"});
+    assertWaitUntil(() -> launcher.afterStartingVertxInvoked);
   }
 
   @Test
   public void testBareAlias() throws Exception {
     MyLauncher launcher = new MyLauncher();
-    launcher.dispatch(new String[] {"-ha"});
-    waitUntil(() -> launcher.afterStartingVertxInvoked);
+    launcher.dispatch(new String[]{"-ha"});
+    assertWaitUntil(() -> launcher.afterStartingVertxInvoked);
+  }
+
+  @Test
+  public void testConfigureClusterHostPortFromProperties() throws Exception {
+    int clusterPort = TestUtils.randomHighPortInt();
+    System.setProperty(RunCommand.VERTX_OPTIONS_PROP_PREFIX + "clusterHost", "127.0.0.1");
+    System.setProperty(RunCommand.VERTX_OPTIONS_PROP_PREFIX + "clusterPort", Integer.toString(clusterPort));
+    MyLauncher launcher = new MyLauncher();
+    String[] args = {"run", "java:" + TestVerticle.class.getCanonicalName(), "-cluster"};
+    launcher.dispatch(args);
+    assertWaitUntil(() -> TestVerticle.instanceCount.get() == 1);
+    assertEquals("127.0.0.1", launcher.options.getClusterHost());
+    assertEquals(clusterPort, launcher.options.getClusterPort());
+    assertNull(launcher.options.getClusterPublicHost());
+    assertEquals(-1, launcher.options.getClusterPublicPort());
+  }
+
+  @Test
+  public void testConfigureClusterHostPortFromCommandLine() throws Exception {
+    int clusterPort = TestUtils.randomHighPortInt();
+    MyLauncher launcher = new MyLauncher();
+    String[] args = {"run", "java:" + TestVerticle.class.getCanonicalName(), "-cluster", "--cluster-host", "127.0.0.1", "--cluster-port", Integer.toString(clusterPort)};
+    launcher.dispatch(args);
+    assertWaitUntil(() -> TestVerticle.instanceCount.get() == 1);
+    assertEquals("127.0.0.1", launcher.options.getClusterHost());
+    assertEquals(clusterPort, launcher.options.getClusterPort());
+    assertNull(launcher.options.getClusterPublicHost());
+    assertEquals(-1, launcher.options.getClusterPublicPort());
+  }
+
+  @Test
+  public void testOverrideClusterHostPortFromProperties() throws Exception {
+    int clusterPort = TestUtils.randomHighPortInt();
+    int newClusterPort = TestUtils.randomHighPortInt();
+    int newClusterPublicPort = TestUtils.randomHighPortInt();
+    System.setProperty(RunCommand.VERTX_OPTIONS_PROP_PREFIX + "clusterHost", "127.0.0.2");
+    System.setProperty(RunCommand.VERTX_OPTIONS_PROP_PREFIX + "clusterPort", Integer.toString(clusterPort));
+    MyLauncher launcher = new MyLauncher();
+    launcher.clusterHost = "127.0.0.1";
+    launcher.clusterPort = newClusterPort;
+    launcher.clusterPublicHost = "127.0.0.3";
+    launcher.clusterPublicPort = newClusterPublicPort;
+    String[] args = {"run", "java:" + TestVerticle.class.getCanonicalName(), "-cluster"};
+    launcher.dispatch(args);
+    assertWaitUntil(() -> TestVerticle.instanceCount.get() == 1);
+    assertEquals("127.0.0.1", launcher.options.getClusterHost());
+    assertEquals(newClusterPort, launcher.options.getClusterPort());
+    assertEquals("127.0.0.3", launcher.options.getClusterPublicHost());
+    assertEquals(newClusterPublicPort, launcher.options.getClusterPublicPort());
+  }
+
+  @Test
+  public void testOverrideClusterHostPortFromCommandLine() throws Exception {
+    int clusterPort = TestUtils.randomHighPortInt();
+    int newClusterPort = TestUtils.randomHighPortInt();
+    int newClusterPublicPort = TestUtils.randomHighPortInt();
+    MyLauncher launcher = new MyLauncher();
+    launcher.clusterHost = "127.0.0.1";
+    launcher.clusterPort = newClusterPort;
+    launcher.clusterPublicHost = "127.0.0.3";
+    launcher.clusterPublicPort = newClusterPublicPort;
+    String[] args = {"run", "java:" + TestVerticle.class.getCanonicalName(), "-cluster", "--cluster-host", "127.0.0.2", "--cluster-port", Integer.toString(clusterPort)};
+    launcher.dispatch(args);
+    assertWaitUntil(() -> TestVerticle.instanceCount.get() == 1);
+    assertEquals("127.0.0.1", launcher.options.getClusterHost());
+    assertEquals(newClusterPort, launcher.options.getClusterPort());
+    assertEquals("127.0.0.3", launcher.options.getClusterPublicHost());
+    assertEquals(newClusterPublicPort, launcher.options.getClusterPublicPort());
   }
 
   class MyLauncher extends Launcher {
@@ -530,11 +612,13 @@ public class LauncherTest extends VertxTestBase {
     boolean afterStartingVertxInvoked = false;
     boolean beforeDeployingVerticle = false;
 
-    Vertx vertx;
     VertxOptions options;
     DeploymentOptions deploymentOptions;
     JsonObject config;
-
+    String clusterHost;
+    int clusterPort;
+    String clusterPublicHost;
+    int clusterPublicPort;
 
     PrintStream stream = new PrintStream(out);
 
@@ -564,12 +648,19 @@ public class LauncherTest extends VertxTestBase {
     public void beforeStartingVertx(VertxOptions options) {
       beforeStartingVertxInvoked = true;
       this.options = options;
+      if (clusterHost != null) {
+        options.setClusterHost(clusterHost);
+        options.setClusterPort(clusterPort);
+        options.setClusterPublicHost(clusterPublicHost);
+        options.setClusterPublicPort(clusterPublicPort);
+        super.beforeStartingVertx(options);
+      }
     }
 
     @Override
     public void afterStartingVertx(Vertx vertx) {
       afterStartingVertxInvoked = true;
-      this.vertx = vertx;
+      LauncherTest.this.vertx = vertx;
     }
 
     @Override

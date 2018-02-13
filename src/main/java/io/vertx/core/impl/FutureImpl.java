@@ -1,17 +1,12 @@
 /*
- * Copyright (c) 2011-2013 The original author or authors
- * ------------------------------------------------------
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *     The Eclipse Public License is available at
- *     http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *     The Apache License v2.0 is available at
- *     http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.core.impl;
@@ -28,33 +23,9 @@ class FutureImpl<T> implements Future<T>, Handler<AsyncResult<T>> {
   private Throwable throwable;
 
   /**
-   * Create a FutureResult that hasn't completed yet
+   * Create a future that hasn't completed yet
    */
   FutureImpl() {
-  }
-
-  /**
-   * Create a VoidResult that has already completed
-   * @param t The Throwable or null if succeeded
-   */
-  FutureImpl(Throwable t) {
-    if (t == null) {
-      complete(null);
-    } else {
-      fail(t);
-    }
-  }
-
-  FutureImpl(String failureMessage, boolean failed) {
-    this(new NoStackTraceThrowable(failureMessage));
-  }
-
-  /**
-   * Create a FutureResult that has already succeeded
-   * @param result The result
-   */
-  FutureImpl(T result) {
-    complete(result);
   }
 
   /**
@@ -74,21 +45,21 @@ class FutureImpl<T> implements Future<T>, Handler<AsyncResult<T>> {
   /**
    * Did it succeeed?
    */
-  public boolean succeeded() {
+  public synchronized boolean succeeded() {
     return succeeded;
   }
 
   /**
    * Did it fail?
    */
-  public boolean failed() {
+  public synchronized boolean failed() {
     return failed;
   }
 
   /**
    * Has it completed?
    */
-  public boolean isComplete() {
+  public synchronized boolean isComplete() {
     return failed || succeeded;
   }
 
@@ -96,24 +67,65 @@ class FutureImpl<T> implements Future<T>, Handler<AsyncResult<T>> {
    * Set a handler for the result. It will get called when it's complete
    */
   public Future<T> setHandler(Handler<AsyncResult<T>> handler) {
-    this.handler = handler;
-    checkCallHandler();
+    boolean callHandler;
+    synchronized (this) {
+      this.handler = handler;
+      callHandler = isComplete();
+    }
+    if (callHandler) {
+      handler.handle(this);
+    }
     return this;
   }
 
-  /**
-   * Set the result. Any handler will be called, if there is one
-   */
+  @Override
   public void complete(T result) {
-    checkComplete();
-    this.result = result;
-    succeeded = true;
-    checkCallHandler();
+    if (!tryComplete(result)) {
+      throw new IllegalStateException("Result is already complete: " + (succeeded ? "succeeded" : "failed"));
+    }
   }
 
   @Override
   public void complete() {
-    complete(null);
+    if (!tryComplete()) {
+      throw new IllegalStateException("Result is already complete: " + (succeeded ? "succeeded" : "failed"));
+    }
+  }
+
+  @Override
+  public void fail(Throwable cause) {
+    if (!tryFail(cause)) {
+      throw new IllegalStateException("Result is already complete: " + (succeeded ? "succeeded" : "failed"));
+    }
+  }
+
+  @Override
+  public void fail(String failureMessage) {
+    if (!tryFail(failureMessage)) {
+      throw new IllegalStateException("Result is already complete: " + (succeeded ? "succeeded" : "failed"));
+    }
+  }
+
+  @Override
+  public boolean tryComplete(T result) {
+    Handler<AsyncResult<T>> h;
+    synchronized (this) {
+      if (succeeded || failed) {
+        return false;
+      }
+      this.result = result;
+      succeeded = true;
+      h = handler;
+    }
+    if (h != null) {
+      h.handle(this);
+    }
+    return true;
+  }
+
+  @Override
+  public boolean tryComplete() {
+    return tryComplete(null);
   }
 
   public void handle(Future<T> ar) {
@@ -130,39 +142,46 @@ class FutureImpl<T> implements Future<T>, Handler<AsyncResult<T>> {
   }
 
   @Override
-  public void handle(AsyncResult<T> ar) {
-    if (ar.succeeded()) {
-      complete(ar.result());
+  public void handle(AsyncResult<T> asyncResult) {
+    if (asyncResult.succeeded()) {
+      complete(asyncResult.result());
     } else {
-      fail(ar.cause());
+      fail(asyncResult.cause());
     }
-  }
-
-  /**
-   * Set the failure. Any handler will be called, if there is one
-   */
-  public void fail(Throwable throwable) {
-    checkComplete();
-    this.throwable = throwable;
-    failed = true;
-    checkCallHandler();
   }
 
   @Override
-  public void fail(String failureMessage) {
-    fail(new NoStackTraceThrowable(failureMessage));
+  public boolean tryFail(Throwable cause) {
+    Handler<AsyncResult<T>> h;
+    synchronized (this) {
+      if (succeeded || failed) {
+        return false;
+      }
+      this.throwable = cause != null ? cause : new NoStackTraceThrowable(null);
+      failed = true;
+      h = handler;
+    }
+    if (h != null) {
+      h.handle(this);
+    }
+    return true;
   }
 
-  private void checkCallHandler() {
-    if (handler != null && isComplete()) {
-      handler.handle(this);
+  @Override
+  public boolean tryFail(String failureMessage) {
+    return tryFail(new NoStackTraceThrowable(failureMessage));
+  }
+
+  @Override
+  public String toString() {
+    synchronized (this) {
+      if (succeeded) {
+        return "Future{result=" + result + "}";
+      }
+      if (failed) {
+        return "Future{cause=" + throwable.getMessage() + "}";
+      }
+      return "Future{unresolved}";
     }
   }
-
-  private void checkComplete() {
-    if (succeeded || failed) {
-      throw new IllegalStateException("Result is already complete: " + (succeeded ? "succeeded" : "failed"));
-    }
-  }
-
 }

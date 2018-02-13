@@ -1,25 +1,17 @@
 /*
- *  Copyright (c) 2011-2015 The original author or authors
- *  ------------------------------------------------------
- *  All rights reserved. This program and the accompanying materials
- *  are made available under the terms of the Eclipse Public License v1.0
- *  and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *       The Eclipse Public License is available at
- *       http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *       The Apache License v2.0 is available at
- *       http://www.opensource.org/licenses/apache2.0.php
- *
- *  You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.core.impl.launcher.commands;
 
-import io.vertx.core.cli.annotations.Argument;
-import io.vertx.core.cli.annotations.Description;
-import io.vertx.core.cli.annotations.Name;
-import io.vertx.core.cli.annotations.Summary;
+import io.vertx.core.cli.annotations.*;
 import io.vertx.core.spi.launcher.DefaultCommand;
 
 import java.io.BufferedReader;
@@ -44,6 +36,12 @@ public class StopCommand extends DefaultCommand {
 
   private String id;
 
+  /**
+   * Whether or not we are in redeploy mode. In redeploy mode, do not exit the VM.
+   */
+  private boolean redeploy;
+
+
   private static final Pattern PS = Pattern.compile("([0-9]+)\\s.*-Dvertx.id=.*");
 
   /**
@@ -55,6 +53,12 @@ public class StopCommand extends DefaultCommand {
   @Description("The vert.x application id")
   public void setApplicationId(String id) {
     this.id = id;
+  }
+
+  @Option(longName = "redeploy", flag = true)
+  @Hidden
+  public void setRedeploy(boolean redeploy) {
+    this.redeploy = redeploy;
   }
 
   /**
@@ -80,6 +84,9 @@ public class StopCommand extends DefaultCommand {
     String pid = pid();
     if (pid == null) {
       out.println("Cannot find process for application using the id '" + id + "'.");
+      if (!redeploy) {
+        ExecUtils.exitBecauseOfProcessIssue();
+      }
       return;
     }
 
@@ -87,11 +94,18 @@ public class StopCommand extends DefaultCommand {
     cmd.add("kill");
     cmd.add(pid);
     try {
-      new ProcessBuilder(cmd).start().waitFor();
-      out.println("Application '" + id + "' stopped.");
+      int result = new ProcessBuilder(cmd).start().waitFor();
+      out.println("Application '" + id + "' terminated with status " + result);
+      if (!redeploy) {
+        // We leave the application using the same exit code.
+        ExecUtils.exit(result);
+      }
     } catch (Exception e) {
       out.println("Failed to stop application '" + id + "'");
       e.printStackTrace(out);
+      if (!redeploy) {
+        ExecUtils.exitBecauseOfProcessIssue();
+      }
     }
   }
 
@@ -108,13 +122,19 @@ public class StopCommand extends DefaultCommand {
 
     try {
       final Process process = new ProcessBuilder(cmd).start();
-      out.println("Application '" + id + "' stopped");
-      process.waitFor();
+      int result = process.waitFor();
+      out.println("Application '" + id + "' terminated with status " + result);
+      if (!redeploy) {
+        // We leave the application using the same exit code.
+        ExecUtils.exit(result);
+      }
     } catch (Exception e) {
       out.println("Failed to stop application '" + id + "'");
       e.printStackTrace(out);
+      if (!redeploy) {
+        ExecUtils.exitBecauseOfProcessIssue();
+      }
     }
-
   }
 
   private String pid() {

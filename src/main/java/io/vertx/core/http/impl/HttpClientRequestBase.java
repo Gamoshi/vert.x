@@ -1,23 +1,19 @@
 /*
- * Copyright (c) 2011-2013 The original author or authors
- *  ------------------------------------------------------
- *  All rights reserved. This program and the accompanying materials
- *  are made available under the terms of the Eclipse Public License v1.0
- *  and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *      The Eclipse Public License is available at
- *      http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *      The Apache License v2.0 is available at
- *      http://www.opensource.org/licenses/apache2.0.php
- *
- *  You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.core.http.impl;
 
 import io.vertx.core.Handler;
 import io.vertx.core.http.HttpClientRequest;
+import io.vertx.core.http.HttpMethod;
 import io.vertx.core.logging.Logger;
 import io.vertx.core.logging.LoggerFactory;
 
@@ -35,20 +31,25 @@ abstract class HttpClientRequestBase implements HttpClientRequest {
   protected final String uri;
   protected final String path;
   protected final String host;
+  protected final int port;
   protected final String query;
+  protected final boolean ssl;
   private Handler<Throwable> exceptionHandler;
   private long currentTimeoutTimerId = -1;
+  private long currentTimeoutMs;
   private long lastDataReceived;
-  protected boolean exceptionOccurred;
+  protected Throwable exceptionOccurred;
   private Object metric;
 
-  HttpClientRequestBase(HttpClientImpl client, io.vertx.core.http.HttpMethod method, String host, String uri) {
+  HttpClientRequestBase(HttpClientImpl client, boolean ssl, HttpMethod method, String host, int port, String uri) {
     this.client = client;
     this.uri = uri;
     this.method = method;
     this.host = host;
+    this.port = port;
     this.path = uri.length() > 0 ? HttpUtils.parsePath(uri) : "";
     this.query = HttpUtils.parseQuery(uri);
+    this.ssl = ssl;
   }
 
   Object metric() {
@@ -60,8 +61,21 @@ abstract class HttpClientRequestBase implements HttpClientRequest {
   }
 
   protected abstract Object getLock();
-  protected abstract void doHandleResponse(HttpClientResponseImpl resp);
+  protected abstract void doHandleResponse(HttpClientResponseImpl resp, long timeoutMs);
   protected abstract void checkComplete();
+
+  protected String hostHeader() {
+    if ((port == 80 && !ssl) || (port == 443 && ssl)) {
+      return host;
+    } else {
+      return host + ':' + port;
+    }
+  }
+
+  @Override
+  public String absoluteURI() {
+    return (ssl ? "https://" : "http://") + hostHeader() + uri;
+  }
 
   public String query() {
     return query;
@@ -93,10 +107,17 @@ abstract class HttpClientRequestBase implements HttpClientRequest {
     }
   }
 
+  Handler<Throwable> exceptionHandler() {
+    synchronized (getLock()) {
+      return exceptionHandler;
+    }
+  }
+
   @Override
   public HttpClientRequest setTimeout(long timeoutMs) {
     synchronized (getLock()) {
       cancelOutstandingTimeoutTimer();
+      currentTimeoutMs = timeoutMs;
       currentTimeoutTimerId = client.getVertx().setTimer(timeoutMs, id -> handleTimeout(timeoutMs));
       return this;
     }
@@ -105,7 +126,7 @@ abstract class HttpClientRequestBase implements HttpClientRequest {
   public void handleException(Throwable t) {
     synchronized (getLock()) {
       cancelOutstandingTimeoutTimer();
-      exceptionOccurred = true;
+      exceptionOccurred = t;
       if (exceptionHandler != null) {
         exceptionHandler.handle(t);
       } else {
@@ -117,10 +138,11 @@ abstract class HttpClientRequestBase implements HttpClientRequest {
   void handleResponse(HttpClientResponseImpl resp) {
     synchronized (getLock()) {
       // If an exception occurred (e.g. a timeout fired) we won't receive the response.
-      if (!exceptionOccurred) {
+      if (exceptionOccurred == null) {
+        long timeoutMS = currentTimeoutMs;
         cancelOutstandingTimeoutTimer();
         try {
-          doHandleResponse(resp);
+          doHandleResponse(resp, timeoutMS);
         } catch (Throwable t) {
           handleException(t);
         }
@@ -132,6 +154,7 @@ abstract class HttpClientRequestBase implements HttpClientRequest {
     if (currentTimeoutTimerId != -1) {
       client.getVertx().cancelTimer(currentTimeoutTimerId);
       currentTimeoutTimerId = -1;
+      currentTimeoutMs = 0;
     }
   }
 
@@ -152,7 +175,10 @@ abstract class HttpClientRequestBase implements HttpClientRequest {
   }
 
   private void timeout(long timeoutMs) {
-    handleException(new TimeoutException("The timeout period of " + timeoutMs + "ms has been exceeded"));
+    handleException(new TimeoutException("The timeout period of " + timeoutMs + "ms has been exceeded while executing " + method + " " + uri + " for host " + host));
+  }
+
+  void handleResponseEnd() {
   }
 
   void dataReceived() {

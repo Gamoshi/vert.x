@@ -1,17 +1,12 @@
 /*
- * Copyright (c) 2011-2013 The original author or authors
- * ------------------------------------------------------
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *     The Eclipse Public License is available at
- *     http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *     The Apache License v2.0 is available at
- *     http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.core.http.impl;
@@ -45,6 +40,7 @@ import io.vertx.core.net.NetSocket;
 import io.vertx.core.net.SocketAddress;
 
 import javax.net.ssl.SSLPeerUnverifiedException;
+import javax.net.ssl.SSLSession;
 import javax.security.cert.X509Certificate;
 import java.net.URISyntaxException;
 
@@ -63,12 +59,13 @@ public class HttpServerRequestImpl implements HttpServerRequest {
 
   private static final Logger log = LoggerFactory.getLogger(HttpServerRequestImpl.class);
 
-  private final ServerConnection conn;
+  private final Http1xServerConnection conn;
   private final HttpRequest request;
   private final HttpServerResponse response;
 
   private io.vertx.core.http.HttpVersion version;
   private io.vertx.core.http.HttpMethod method;
+  private String rawMethod;
   private String uri;
   private String path;
   private String query;
@@ -89,7 +86,7 @@ public class HttpServerRequestImpl implements HttpServerRequest {
   private boolean ended;
 
 
-  HttpServerRequestImpl(ServerConnection conn,
+  HttpServerRequestImpl(Http1xServerConnection conn,
                         HttpRequest request,
                         HttpServerResponse response) {
     this.conn = conn;
@@ -116,15 +113,22 @@ public class HttpServerRequestImpl implements HttpServerRequest {
   @Override
   public io.vertx.core.http.HttpMethod method() {
     if (method == null) {
-      String sMethod = request.getMethod().toString();
+      String sMethod = request.method().toString();
       try {
         method = io.vertx.core.http.HttpMethod.valueOf(sMethod);
       } catch (IllegalArgumentException e) {
-        sendNotImplementedAndClose();
-        throw new IllegalStateException("Unsupported HTTP method: " + sMethod);
+        method = io.vertx.core.http.HttpMethod.OTHER;
       }
     }
     return method;
+  }
+
+  @Override
+  public String rawMethod() {
+    if (rawMethod == null) {
+      rawMethod = request.method().toString();
+    }
+    return rawMethod;
   }
 
   @Override
@@ -193,10 +197,12 @@ public class HttpServerRequestImpl implements HttpServerRequest {
   }
 
   @Override
-  public HttpServerRequest handler(Handler<Buffer> dataHandler) {
+  public HttpServerRequest handler(Handler<Buffer> handler) {
     synchronized (conn) {
-      checkEnded();
-      this.dataHandler = dataHandler;
+      if (handler != null) {
+        checkEnded();
+      }
+      dataHandler = handler;
       return this;
     }
   }
@@ -212,7 +218,9 @@ public class HttpServerRequestImpl implements HttpServerRequest {
   @Override
   public HttpServerRequest pause() {
     synchronized (conn) {
-      conn.pause();
+      if (!ended) {
+        conn.pause();
+      }
       return this;
     }
   }
@@ -220,7 +228,9 @@ public class HttpServerRequestImpl implements HttpServerRequest {
   @Override
   public HttpServerRequest resume() {
     synchronized (conn) {
-      conn.resume();
+      if (!ended) {
+        conn.resume();
+      }
       return this;
     }
   }
@@ -228,8 +238,10 @@ public class HttpServerRequestImpl implements HttpServerRequest {
   @Override
   public HttpServerRequest endHandler(Handler<Void> handler) {
     synchronized (conn) {
-      checkEnded();
-      this.endHandler = handler;
+      if (handler != null) {
+        checkEnded();
+      }
+      endHandler = handler;
       return this;
     }
   }
@@ -243,7 +255,7 @@ public class HttpServerRequestImpl implements HttpServerRequest {
   public boolean isSSL() {
     return conn.isSSL();
   }
-  
+
   @Override
   public SocketAddress remoteAddress() {
     return conn.remoteAddress();
@@ -262,8 +274,13 @@ public class HttpServerRequestImpl implements HttpServerRequest {
   }
 
   @Override
+  public SSLSession sslSession() {
+    return conn.sslSession();
+  }
+
+  @Override
   public X509Certificate[] peerCertificateChain() throws SSLPeerUnverifiedException {
-    return conn.getPeerCertificateChain();
+    return conn.peerCertificateChain();
   }
 
   @Override
@@ -277,8 +294,10 @@ public class HttpServerRequestImpl implements HttpServerRequest {
   @Override
   public HttpServerRequest uploadHandler(Handler<HttpServerFileUpload> handler) {
     synchronized (conn) {
-      checkEnded();
-      this.uploadHandler = handler;
+      if (handler != null) {
+        checkEnded();
+      }
+      uploadHandler = handler;
       return this;
     }
   }
@@ -343,13 +362,13 @@ public class HttpServerRequestImpl implements HttpServerRequest {
   }
 
   @Override
-  public HttpServerRequest unknownFrameHandler(Handler<HttpFrame> handler) {
+  public HttpServerRequest customFrameHandler(Handler<HttpFrame> handler) {
     return this;
   }
 
   @Override
   public HttpConnection connection() {
-    return null;
+    return conn;
   }
 
   void handleData(Buffer data) {

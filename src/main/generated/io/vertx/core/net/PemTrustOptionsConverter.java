@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 Red Hat, Inc.
+ * Copyright (c) 2014 Red Hat, Inc. and others
  *
  * Red Hat licenses this file to you under the Apache License, version 2.0
  * (the "License"); you may not use this file except in compliance with the
@@ -24,9 +24,9 @@ import io.vertx.core.json.JsonArray;
  *
  * NOTE: This class has been automatically generated from the {@link io.vertx.core.net.PemTrustOptions} original class using Vert.x codegen.
  */
-public class PemTrustOptionsConverter {
+ class PemTrustOptionsConverter {
 
-  public static void fromJson(JsonObject json, PemTrustOptions obj) {
+   static void fromJson(JsonObject json, PemTrustOptions obj) {
     if (json.getValue("certPaths") instanceof JsonArray) {
       json.getJsonArray("certPaths").forEach(item -> {
         if (item instanceof String)
@@ -41,20 +41,16 @@ public class PemTrustOptionsConverter {
     }
   }
 
-  public static void toJson(PemTrustOptions obj, JsonObject json) {
+   static void toJson(PemTrustOptions obj, JsonObject json) {
     if (obj.getCertPaths() != null) {
-      json.put("certPaths", new JsonArray(
-          obj.getCertPaths().
-              stream().
-              map(item -> item).
-              collect(java.util.stream.Collectors.toList())));
+      JsonArray array = new JsonArray();
+      obj.getCertPaths().forEach(item -> array.add(item));
+      json.put("certPaths", array);
     }
     if (obj.getCertValues() != null) {
-      json.put("certValues", new JsonArray(
-          obj.getCertValues().
-              stream().
-              map(item -> item.getBytes()).
-              collect(java.util.stream.Collectors.toList())));
+      JsonArray array = new JsonArray();
+      obj.getCertValues().forEach(item -> array.add(item.getBytes()));
+      json.put("certValues", array);
     }
   }
 }

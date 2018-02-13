@@ -1,17 +1,12 @@
 /*
- * Copyright 2014 Red Hat, Inc.
+ * Copyright (c) 2014 Red Hat, Inc. and others
  *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- * The Eclipse Public License is available at
- * http://www.eclipse.org/legal/epl-v10.html
- *
- * The Apache License v2.0 is available at
- * http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.test.core;
@@ -19,23 +14,50 @@ package io.vertx.test.core;
 
 import io.netty.handler.codec.http.websocketx.WebSocketHandshakeException;
 import io.vertx.core.AbstractVerticle;
+import io.vertx.core.AsyncResult;
 import io.vertx.core.Context;
 import io.vertx.core.DeploymentOptions;
+import io.vertx.core.Future;
+import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
+import io.vertx.core.VertxOptions;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.core.http.*;
+import io.vertx.core.http.ClientAuth;
+import io.vertx.core.http.HttpClient;
+import io.vertx.core.http.HttpClientOptions;
+import io.vertx.core.http.HttpMethod;
+import io.vertx.core.http.HttpServer;
+import io.vertx.core.http.HttpServerOptions;
+import io.vertx.core.http.HttpServerRequest;
+import io.vertx.core.http.HttpVersion;
+import io.vertx.core.http.RequestOptions;
+import io.vertx.core.http.ServerWebSocket;
+import io.vertx.core.http.WebSocket;
+import io.vertx.core.http.WebSocketBase;
+import io.vertx.core.http.WebSocketFrame;
+import io.vertx.core.http.WebsocketRejectedException;
+import io.vertx.core.http.WebsocketVersion;
+import io.vertx.core.http.impl.FrameType;
+import io.vertx.core.http.impl.ws.WebSocketFrameImpl;
 import io.vertx.core.impl.ConcurrentHashSet;
+import io.vertx.core.net.NetServer;
 import io.vertx.core.net.NetSocket;
+import io.vertx.core.net.SelfSignedCertificate;
 import io.vertx.core.streams.ReadStream;
+import io.vertx.test.core.tls.Cert;
+import io.vertx.test.core.tls.Trust;
 import org.junit.Test;
 
+import javax.security.cert.X509Certificate;
+import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -44,6 +66,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 import static io.vertx.test.core.TestUtils.*;
 
@@ -54,6 +77,7 @@ public class WebsocketTest extends VertxTestBase {
 
   private HttpClient client;
   private HttpServer server;
+  private NetServer netServer;
 
   public void setUp() throws Exception {
     super.setUp();
@@ -70,19 +94,40 @@ public class WebsocketTest extends VertxTestBase {
       });
       awaitLatch(latch);
     }
+    if (netServer != null) {
+      CountDownLatch latch = new CountDownLatch(1);
+      netServer.close(ar -> {
+        assertTrue(ar.succeeded());
+        latch.countDown();
+      });
+      awaitLatch(latch);
+    }
     super.tearDown();
+  }
+
+  @Override
+  protected VertxOptions getOptions() {
+    VertxOptions options = super.getOptions();
+    options.getAddressResolverOptions().setHostsValue(Buffer.buffer("" +
+        "127.0.0.1 localhost\n" +
+        "127.0.0.1 host2.com"));
+    return options;
   }
 
   @Test
   public void testRejectHybi00() throws Exception {
-    testReject(WebsocketVersion.V00);
+    testReject(WebsocketVersion.V00, null, 502);
   }
 
   @Test
   public void testRejectHybi08() throws Exception {
-    testReject(WebsocketVersion.V08);
+    testReject(WebsocketVersion.V08, null, 502);
   }
 
+  @Test
+  public void testRejectWithStatusCode() throws Exception {
+    testReject(WebsocketVersion.V08, 404, 404);
+  }
 
   @Test
   public void testWSBinaryHybi00() throws Exception {
@@ -190,151 +235,202 @@ public class WebsocketTest extends VertxTestBase {
   @Test
   // Client trusts all server certs
   public void testTLSClientTrustAll() throws Exception {
-    testTLS(TLSCert.NONE, TLSCert.NONE, TLSCert.JKS, TLSCert.NONE, false, false, true, false, true);
+    testTLS(Cert.NONE, Trust.NONE, Cert.SERVER_JKS, Trust.NONE, false, false, true, false, true);
   }
 
   @Test
   // Server specifies cert that the client trusts (not trust all)
   public void testTLSClientTrustServerCert() throws Exception {
-    testTLS(TLSCert.NONE, TLSCert.JKS, TLSCert.JKS, TLSCert.NONE, false, false, false, false, true);
+    testTLS(Cert.NONE, Trust.SERVER_JKS, Cert.SERVER_JKS, Trust.NONE, false, false, false, false, true);
+  }
+
+  @Test
+  // Server specifies cert that the client trusts (not trust all)
+  public void testTLSClientTrustServerCertWithSNI() throws Exception {
+    testTLS(Cert.NONE, Trust.SNI_JKS_HOST2, Cert.SNI_JKS, Trust.NONE, false, false, false, false, true, true, true, true, new String[0],
+        client -> client.websocketStream(4043, "host2.com", "/"));
   }
 
   @Test
   // Server specifies cert that the client trusts (not trust all)
   public void testTLSClientTrustServerCertPKCS12() throws Exception {
-    testTLS(TLSCert.NONE, TLSCert.JKS, TLSCert.PKCS12, TLSCert.NONE, false, false, false, false, true);
+    testTLS(Cert.NONE, Trust.SERVER_JKS, Cert.SERVER_PKCS12, Trust.NONE, false, false, false, false, true);
   }
 
   @Test
   // Server specifies cert that the client trusts (not trust all)
   public void testTLSClientTrustServerCertPEM() throws Exception {
-    testTLS(TLSCert.NONE, TLSCert.JKS, TLSCert.PEM, TLSCert.NONE, false, false, false, false, true);
+    testTLS(Cert.NONE, Trust.SERVER_JKS, Cert.SERVER_PEM, Trust.NONE, false, false, false, false, true);
   }
 
   @Test
   // Server specifies cert that the client trusts via a CA (not trust all)
   public void testTLSClientTrustServerCertPEM_CA() throws Exception {
-    testTLS(TLSCert.NONE, TLSCert.PEM_CA, TLSCert.PEM_CA, TLSCert.NONE, false, false, false, false, true);
+    testTLS(Cert.NONE, Trust.SERVER_PEM_ROOT_CA, Cert.SERVER_PEM_ROOT_CA, Trust.NONE, false, false, false, false, true);
   }
 
   @Test
   // Server specifies cert that the client trusts (not trust all)
   public void testTLSClientTrustPKCS12ServerCert() throws Exception {
-    testTLS(TLSCert.NONE, TLSCert.PKCS12, TLSCert.JKS, TLSCert.NONE, false, false, false, false, true);
+    testTLS(Cert.NONE, Trust.SERVER_PKCS12, Cert.SERVER_JKS, Trust.NONE, false, false, false, false, true);
   }
 
   @Test
   // Server specifies cert that the client trusts (not trust all)
   public void testTLSClientTrustPEMServerCert() throws Exception {
-    testTLS(TLSCert.NONE, TLSCert.PEM, TLSCert.JKS, TLSCert.NONE, false, false, false, false, true);
+    testTLS(Cert.NONE, Trust.SERVER_PEM, Cert.SERVER_JKS, Trust.NONE, false, false, false, false, true);
   }
 
   @Test
   // Server specifies cert that the client doesn't trust
   public void testTLSClientUntrustedServer() throws Exception {
-    testTLS(TLSCert.NONE, TLSCert.NONE, TLSCert.JKS, TLSCert.NONE, false, false, false, false, false);
+    testTLS(Cert.NONE, Trust.NONE, Cert.SERVER_JKS, Trust.NONE, false, false, false, false, false);
   }
 
   @Test
   //Client specifies cert even though it's not required
   public void testTLSClientCertNotRequired() throws Exception {
-    testTLS(TLSCert.JKS, TLSCert.JKS, TLSCert.JKS, TLSCert.JKS, false, false, false, false, true);
+    testTLS(Cert.CLIENT_JKS, Trust.SERVER_JKS, Cert.SERVER_JKS, Trust.CLIENT_JKS, false, false, false, false, true);
   }
 
   @Test
   //Client specifies cert and it is required
   public void testTLSClientCertRequired() throws Exception {
-    testTLS(TLSCert.JKS, TLSCert.JKS, TLSCert.JKS, TLSCert.JKS, true, false, false, false, true);
+    testTLS(Cert.CLIENT_JKS, Trust.SERVER_JKS, Cert.SERVER_JKS, Trust.CLIENT_JKS, true, false, false, false, true);
   }
 
   @Test
   //Client specifies cert and it is required
   public void testTLSClientCertRequiredPKCS12() throws Exception {
-    testTLS(TLSCert.JKS, TLSCert.JKS, TLSCert.JKS, TLSCert.PKCS12, true, false, false, false, true);
+    testTLS(Cert.CLIENT_JKS, Trust.SERVER_JKS, Cert.SERVER_JKS, Trust.CLIENT_PKCS12, true, false, false, false, true);
   }
 
   @Test
   //Client specifies cert and it is required
   public void testTLSClientCertRequiredPEM() throws Exception {
-    testTLS(TLSCert.JKS, TLSCert.JKS, TLSCert.JKS, TLSCert.PEM, true, false, false, false, true);
+    testTLS(Cert.CLIENT_JKS, Trust.SERVER_JKS, Cert.SERVER_JKS, Trust.CLIENT_PEM, true, false, false, false, true);
   }
 
   @Test
   //Client specifies cert and it is required
   public void testTLSClientCertPKCS12Required() throws Exception {
-    testTLS(TLSCert.PKCS12, TLSCert.JKS, TLSCert.JKS, TLSCert.JKS, true, false, false, false, true);
+    testTLS(Cert.CLIENT_PKCS12, Trust.SERVER_JKS, Cert.SERVER_JKS, Trust.CLIENT_JKS, true, false, false, false, true);
   }
 
   @Test
   //Client specifies cert and it is required
   public void testTLSClientCertPEMRequired() throws Exception {
-    testTLS(TLSCert.PEM, TLSCert.JKS, TLSCert.JKS, TLSCert.JKS, true, false, false, false, true);
+    testTLS(Cert.CLIENT_PEM, Trust.SERVER_JKS, Cert.SERVER_JKS, Trust.CLIENT_JKS, true, false, false, false, true);
   }
 
   @Test
   //Client specifies cert signed by CA and it is required
   public void testTLSClientCertPEM_CARequired() throws Exception {
-    testTLS(TLSCert.PEM_CA, TLSCert.JKS, TLSCert.JKS, TLSCert.PEM_CA, true, false, false, false, true);
+    testTLS(Cert.CLIENT_PEM_ROOT_CA, Trust.SERVER_JKS, Cert.SERVER_JKS, Trust.CLIENT_PEM_ROOT_CA, true, false, false, false, true);
   }
 
   @Test
   //Client doesn't specify cert but it's required
   public void testTLSClientCertRequiredNoClientCert() throws Exception {
-    testTLS(TLSCert.NONE, TLSCert.JKS, TLSCert.JKS, TLSCert.JKS, true, false, false, false, false);
+    testTLS(Cert.NONE, Trust.SERVER_JKS, Cert.SERVER_JKS, Trust.CLIENT_JKS, true, false, false, false, false);
   }
 
   @Test
   //Client specifies cert but it's not trusted
   public void testTLSClientCertClientNotTrusted() throws Exception {
-    testTLS(TLSCert.JKS, TLSCert.JKS, TLSCert.JKS, TLSCert.NONE, true, false, false, false, false);
+    testTLS(Cert.CLIENT_JKS, Trust.SERVER_JKS, Cert.SERVER_JKS, Trust.NONE, true, false, false, false, false);
   }
 
   @Test
   // Server specifies cert that the client does not trust via a revoked certificate of the CA
   public void testTLSClientRevokedServerCert() throws Exception {
-    testTLS(TLSCert.NONE, TLSCert.PEM_CA, TLSCert.PEM_CA, TLSCert.NONE, false, false, false, true, false);
+    testTLS(Cert.NONE, Trust.SERVER_PEM_ROOT_CA, Cert.SERVER_PEM_ROOT_CA, Trust.NONE, false, false, false, true, false);
   }
 
   @Test
   //Client specifies cert that the server does not trust via a revoked certificate of the CA
   public void testTLSRevokedClientCertServer() throws Exception {
-    testTLS(TLSCert.PEM_CA, TLSCert.JKS, TLSCert.JKS, TLSCert.PEM_CA, true, true, false, false, false);
+    testTLS(Cert.CLIENT_PEM_ROOT_CA, Trust.SERVER_JKS, Cert.SERVER_JKS, Trust.CLIENT_PEM_ROOT_CA, true, true, false, false, false);
   }
 
   @Test
   // Test with cipher suites
   public void testTLSCipherSuites() throws Exception {
-    testTLS(TLSCert.NONE, TLSCert.NONE, TLSCert.JKS, TLSCert.NONE, false, false, true, false, true, ENABLED_CIPHER_SUITES);
+    testTLS(Cert.NONE, Trust.NONE, Cert.SERVER_JKS, Trust.NONE, false, false, true, false, true, ENABLED_CIPHER_SUITES);
   }
 
-  private void testTLS(TLSCert clientCert, TLSCert clientTrust,
-                       TLSCert serverCert, TLSCert serverTrust,
+  // RequestOptions tests
+
+  @Test
+  // Client trusts all server certs
+  public void testClearClientRequestOptionsSetSSL() throws Exception {
+    RequestOptions options = new RequestOptions().setHost(HttpTestBase.DEFAULT_HTTP_HOST).setURI("/").setPort(4043).setSsl(true);
+    testTLS(Cert.NONE, Trust.NONE, Cert.SERVER_JKS, Trust.NONE, false, false, true, false, true, false, true, false, new String[0], client -> client.websocketStream(options));
+  }
+
+  @Test
+  // Client trusts all server certs
+  public void testSSLClientRequestOptionsSetSSL() throws Exception {
+    RequestOptions options = new RequestOptions().setHost(HttpTestBase.DEFAULT_HTTP_HOST).setURI("/").setPort(4043).setSsl(true);
+    testTLS(Cert.NONE, Trust.NONE, Cert.SERVER_JKS, Trust.NONE, false, false, true, false, true, true, true, false, new String[0], client -> client.websocketStream(options));
+  }
+
+  @Test
+  // Client trusts all server certs
+  public void testClearClientRequestOptionsSetClear() throws Exception {
+    RequestOptions options = new RequestOptions().setHost(HttpTestBase.DEFAULT_HTTP_HOST).setURI("/").setPort(4043).setSsl(false);
+    testTLS(Cert.NONE, Trust.NONE, Cert.SERVER_JKS, Trust.NONE, false, false, true, false, true, false, false, false, new String[0], client -> client.websocketStream(options));
+  }
+
+  @Test
+  // Client trusts all server certs
+  public void testSSLClientRequestOptionsSetClear() throws Exception {
+    RequestOptions options = new RequestOptions().setHost(HttpTestBase.DEFAULT_HTTP_HOST).setURI("/").setPort(4043).setSsl(false);
+    testTLS(Cert.NONE, Trust.NONE, Cert.SERVER_JKS, Trust.NONE, false, false, true, false, true, true, false, false, new String[0], client -> client.websocketStream(options));
+  }
+
+  private void testTLS(Cert<?> clientCert, Trust<?> clientTrust,
+                       Cert<?> serverCert, Trust<?> serverTrust,
                        boolean requireClientAuth, boolean serverUsesCrl, boolean clientTrustAll,
                        boolean clientUsesCrl, boolean shouldPass,
                        String... enabledCipherSuites) throws Exception {
+    testTLS(clientCert, clientTrust,
+        serverCert, serverTrust,
+        requireClientAuth, serverUsesCrl, clientTrustAll, clientUsesCrl, shouldPass, true, true, false,
+        enabledCipherSuites, client -> client.websocketStream(4043, HttpTestBase.DEFAULT_HTTP_HOST, "/"));
+  }
+
+  private void testTLS(Cert<?> clientCert, Trust<?> clientTrust,
+                       Cert<?> serverCert, Trust<?> serverTrust,
+                       boolean requireClientAuth, boolean serverUsesCrl, boolean clientTrustAll,
+                       boolean clientUsesCrl, boolean shouldPass,
+                       boolean clientSsl,
+                       boolean serverSsl,
+                       boolean sni,
+                       String[] enabledCipherSuites,
+                       Function<HttpClient, ReadStream<WebSocket>> wsProvider) throws Exception {
     HttpClientOptions options = new HttpClientOptions();
-    options.setSsl(true);
-    if (clientTrustAll) {
-      options.setTrustAll(true);
-    }
+    options.setSsl(clientSsl);
+    options.setTrustAll(clientTrustAll);
     if (clientUsesCrl) {
-      options.addCrlPath("tls/ca/crl.pem");
+      options.addCrlPath("tls/root-ca/crl.pem");
     }
-    setOptions(options, clientTrust.getClientTrustOptions());
-    setOptions(options, clientCert.getClientKeyCertOptions());
+    options.setTrustOptions(clientTrust.get());
+    options.setKeyCertOptions(clientCert.get());
     for (String suite: enabledCipherSuites) {
       options.addEnabledCipherSuite(suite);
     }
     client = vertx.createHttpClient(options);
     HttpServerOptions serverOptions = new HttpServerOptions();
-    serverOptions.setSsl(true);
-    setOptions(serverOptions, serverTrust.getServerTrustOptions());
-    setOptions(serverOptions, serverCert.getServerKeyCertOptions());
+    serverOptions.setSsl(serverSsl);
+    serverOptions.setSni(sni);
+    serverOptions.setTrustOptions(serverTrust.get());
+    serverOptions.setKeyCertOptions(serverCert.get());
     if (requireClientAuth) {
       serverOptions.setClientAuth(ClientAuth.REQUIRED);
     }
     if (serverUsesCrl) {
-      serverOptions.addCrlPath("tls/ca/crl.pem");
+      serverOptions.addCrlPath("tls/root-ca/crl.pem");
     }
     for (String suite: enabledCipherSuites) {
       serverOptions.addEnabledCipherSuite(suite);
@@ -346,28 +442,38 @@ public class WebsocketTest extends VertxTestBase {
     try {
       server.listen(ar -> {
         assertTrue(ar.succeeded());
-        client.websocketStream(4043, HttpTestBase.DEFAULT_HTTP_HOST, "/").
-            exceptionHandler(t -> {
-              if (shouldPass) {
-                t.printStackTrace();
-                fail("Should not throw exception");
-              } else {
-                testComplete();
-              }
-            }).
-            handler(ws -> {
-              int size = 100;
-              Buffer received = Buffer.buffer();
-              ws.handler(data -> {
-                received.appendBuffer(data);
-                if (received.length() == size) {
-                  ws.close();
-                  testComplete();
+        Handler<Throwable> errHandler = t -> {
+          if (shouldPass) {
+            t.printStackTrace();
+            fail("Should not throw exception");
+          } else {
+            testComplete();
+          }
+        };
+        Handler<WebSocket> wsHandler = ws -> {
+          if (clientSsl && sni) {
+            try {
+              X509Certificate clientPeerCert = ws.peerCertificateChain()[0];
+              assertEquals("host2.com", cnOf(clientPeerCert));
+            } catch (Exception err) {
+              fail(err);
+            }
+          }
+          int size = 100;
+          Buffer received = Buffer.buffer();
+          ws.handler(data -> {
+            received.appendBuffer(data);
+            if (received.length() == size) {
+              ws.close();
+              testComplete();
             }
           });
           Buffer buff = Buffer.buffer(TestUtils.randomByteArray(size));
           ws.writeFrame(WebSocketFrame.binaryFrame(buff, true));
-        });
+        };
+        wsProvider.apply(client).
+            exceptionHandler(errHandler).
+            handler(wsHandler);
       });
     } catch (Exception e) {
       e.printStackTrace();
@@ -815,17 +921,49 @@ public class WebsocketTest extends VertxTestBase {
     await();
   }
 
+  @Test
+  public void testWriteFromConnectHandlerFromAnotherThread() {
+    Buffer expected = Buffer.buffer("AAA");
+    server = vertx.createHttpServer(new HttpServerOptions().setPort(HttpTestBase.DEFAULT_HTTP_PORT));
+    server.websocketHandler(ws -> {
+      Thread t = new Thread() {
+        @Override
+        public void run() {
+          ws.writeFrame(WebSocketFrame.binaryFrame(expected, true));
+        }
+      };
+      t.start();
+      while (t.getState() != Thread.State.BLOCKED) {
+        Thread.yield();
+      }
+    });
+    server.listen(onSuccess(server -> {
+      client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/", ws -> {
+        ws.handler(buff -> {
+          assertEquals(buff, expected);
+          testComplete();
+        });
+      });
+    }));
+    await();
+  }
+
   private void testValidSubProtocol(WebsocketVersion version) throws Exception {
     String path = "/some/path";
-    String subProtocol = "myprotocol";
+    String clientSubProtocols = "clientproto,commonproto";
+    String serverSubProtocols = "serverproto,commonproto";
     Buffer buff = Buffer.buffer("AAA");
-    server = vertx.createHttpServer(new HttpServerOptions().setPort(HttpTestBase.DEFAULT_HTTP_PORT).setWebsocketSubProtocols(subProtocol)).websocketHandler(ws -> {
+    server = vertx.createHttpServer(new HttpServerOptions().setPort(HttpTestBase.DEFAULT_HTTP_PORT).setWebsocketSubProtocols(serverSubProtocols)).websocketHandler(ws -> {
       assertEquals(path, ws.path());
+      assertNull(ws.subProtocol());
+      ws.accept();
+      assertEquals("commonproto", ws.subProtocol());
       ws.writeFrame(WebSocketFrame.binaryFrame(buff, true));
     });
     server.listen(ar -> {
       assertTrue(ar.succeeded());
-      client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, path, null, version, subProtocol, ws -> {
+      client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, path, null, version, clientSubProtocols, ws -> {
+        assertEquals("commonproto", ws.subProtocol());
         final Buffer received = Buffer.buffer();
         ws.handler(data -> {
           received.appendBuffer(data);
@@ -857,19 +995,59 @@ public class WebsocketTest extends VertxTestBase {
     await();
   }
 
-  private void testReject(WebsocketVersion version) throws Exception {
+  @Test
+  public void testInvalidMissingConnectionHeader() throws Exception {
+    String path = "/some/path";
+    server = vertx.createHttpServer(new HttpServerOptions().setPort(HttpTestBase.DEFAULT_HTTP_PORT).setWebsocketSubProtocols("invalid")).websocketHandler(ws -> {
+    });
+    server.listen(onSuccess(ar -> {
+      client.get(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTPS_HOST, path, resp -> {
+        assertEquals(400, resp.statusCode());
+        resp.endHandler(v -> {
+          testComplete();
+        });
+      }).putHeader("Upgrade", "Websocket").end();
+    }));
+    await();
+  }
+
+  @Test
+  public void testInvalidMethod() throws Exception {
+    String path = "/some/path";
+    server = vertx.createHttpServer(new HttpServerOptions().setPort(HttpTestBase.DEFAULT_HTTP_PORT).setWebsocketSubProtocols("invalid")).websocketHandler(ws -> {
+    });
+    server.listen(onSuccess(ar -> {
+      client.head(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTPS_HOST, path, resp -> {
+        assertEquals(405, resp.statusCode());
+        resp.endHandler(v -> {
+          testComplete();
+        });
+      }).putHeader("Upgrade", "Websocket").putHeader("Connection", "Upgrade").end();
+    }));
+    await();
+  }
+
+  private void testReject(WebsocketVersion version, Integer rejectionStatus, int expectedRejectionStatus) throws Exception {
 
     String path = "/some/path";
 
     server = vertx.createHttpServer(new HttpServerOptions().setPort(HttpTestBase.DEFAULT_HTTP_PORT)).websocketHandler(ws -> {
       assertEquals(path, ws.path());
-      ws.reject();
+      if (rejectionStatus != null) {
+        ws.reject(rejectionStatus);
+      } else {
+        ws.reject();
+      }
     });
 
     server.listen(ar -> {
       assertTrue(ar.succeeded());
       client.websocketStream(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, path, null, version).
-          exceptionHandler(t -> testComplete()).
+          exceptionHandler(t -> {
+            assertTrue(t instanceof WebsocketRejectedException);
+            assertEquals(expectedRejectionStatus, ((WebsocketRejectedException)t).getStatus());
+            testComplete();
+          }).
           handler(ws -> fail("Should not be called"));
     });
     await();
@@ -933,7 +1111,7 @@ public class WebsocketTest extends VertxTestBase {
         Buffer actual = Buffer.buffer();
         ws.handler(actual::appendBuffer);
         ws.closeHandler(v -> {
-          assertArrayEquals(expected, actual.getBytes());
+          assertArrayEquals(expected, actual.getBytes(0, actual.length()));
           testComplete();
         });
       });
@@ -942,10 +1120,133 @@ public class WebsocketTest extends VertxTestBase {
   }
 
   @Test
+  public void testNonFragmentedTextMessage2Hybi00() {
+      String messageToSend = TestUtils.randomAlphaString(256);
+      testWriteSingleTextMessage(messageToSend, WebsocketVersion.V00);
+  }
+
+  @Test
+  public void testFragmentedTextMessage2Hybi07() {
+    String messageToSend = TestUtils.randomAlphaString(65536 + 65536 + 256);
+    testWriteSingleTextMessage(messageToSend, WebsocketVersion.V07);
+  }
+
+  @Test
+  public void testFragmentedTextMessage2Hybi08() {
+    String messageToSend = TestUtils.randomAlphaString(65536 + 65536 + 256);
+    testWriteSingleTextMessage(messageToSend, WebsocketVersion.V08);
+  }
+
+  @Test
+  public void testFragmentedTextMessage2Hybi13() {
+    String messageToSend = TestUtils.randomAlphaString(65536 + 65536 + 256);
+    testWriteSingleTextMessage(messageToSend, WebsocketVersion.V13);
+  }
+
+  @Test
+  public void testMaxLengthFragmentedTextMessage() {
+    String messageToSend = TestUtils.randomAlphaString(HttpServerOptions.DEFAULT_MAX_WEBSOCKET_MESSAGE_SIZE);
+    testWriteSingleTextMessage(messageToSend, WebsocketVersion.V13);
+  }
+
+  @Test
+  public void testFragmentedUnicodeTextMessage2Hybi07() {
+    String messageToSend = TestUtils.randomUnicodeString(65536 + 256);
+    testWriteSingleTextMessage(messageToSend, WebsocketVersion.V07);
+  }
+
+  @Test
+  public void testFragmentedUnicodeTextMessage2Hybi08() {
+    String messageToSend = TestUtils.randomUnicodeString(65536 + 256);
+    testWriteSingleTextMessage(messageToSend, WebsocketVersion.V08);
+  }
+
+  @Test
+  public void testFragmentedUnicodeTextMessage2Hybi13() {
+    String messageToSend = TestUtils.randomUnicodeString(65536 + 256);
+    testWriteSingleTextMessage(messageToSend, WebsocketVersion.V13);
+  }
+
+  @Test
+  public void testTooLargeMessage() {
+    String messageToSend = TestUtils.randomAlphaString(HttpClientOptions.DEFAULT_MAX_WEBSOCKET_MESSAGE_SIZE + 1);
+    SocketMessages socketMessages = testWriteTextMessages(Collections.singletonList(messageToSend), WebsocketVersion.V13);
+    List<String> receivedMessages = socketMessages.getReceivedMessages();
+    List<String> expectedMessages = Collections.emptyList();
+    assertEquals("Should not have received any messages", expectedMessages, receivedMessages);
+    List<Throwable> receivedExceptions = socketMessages.getReceivedExceptions();
+    assertEquals("Should have received a single exception", 1, receivedExceptions.size());
+    assertTrue("Should have received IllegalStateException",
+            receivedExceptions.get(0) instanceof IllegalStateException);
+  }
+
+  @Test
+  public void testContinueAfterTooLargeMessage() {
+    int shortMessageLength = HttpClientOptions.DEFAULT_MAX_WEBSOCKET_FRAME_SIZE;
+    String shortFirstMessage = TestUtils.randomAlphaString(shortMessageLength);
+    String tooLongMiddleMessage = TestUtils.randomAlphaString(HttpClientOptions.DEFAULT_MAX_WEBSOCKET_MESSAGE_SIZE * 2);
+    String shortLastMessage = TestUtils.randomAlphaString(shortMessageLength);
+    List<String> messagesToSend = Arrays.asList(shortFirstMessage, tooLongMiddleMessage, shortLastMessage);
+
+    SocketMessages socketMessages = testWriteTextMessages(messagesToSend, WebsocketVersion.V13);
+    List<String> receivedMessages = socketMessages.getReceivedMessages();
+    List<String> expectedMessages = Arrays.asList(shortFirstMessage, shortLastMessage);
+    assertEquals("Incorrect received messages", expectedMessages, receivedMessages);
+  }
+
+  private void testWriteSingleTextMessage(String messageToSend, WebsocketVersion version) {
+    List<String> messagesToSend = Collections.singletonList(messageToSend);
+    SocketMessages socketMessages = testWriteTextMessages(messagesToSend, version);
+    assertEquals("Did not receive all messages", messagesToSend, socketMessages.getReceivedMessages());
+    List<Throwable> expectedExceptions = Collections.emptyList();
+    assertEquals("Should not have received any exceptions", expectedExceptions, socketMessages.getReceivedExceptions());
+  }
+
+  private SocketMessages testWriteTextMessages(List<String> messagesToSend, WebsocketVersion version) {
+    String path = "/some/path";
+    server = vertx.createHttpServer(new HttpServerOptions().setPort(HttpTestBase.DEFAULT_HTTP_PORT)).websocketHandler(ws -> {
+      for (String messageToSend : messagesToSend) {
+        ws.writeTextMessage(messageToSend);
+      }
+      ws.close();
+    });
+
+    List<String> receivedMessages = new ArrayList<>();
+    List<Throwable> receivedExceptions = new ArrayList<>();
+    server.listen(ar -> {
+      assertTrue(ar.succeeded());
+      client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, path, null, version, ws -> {
+        ws.textMessageHandler(receivedMessages::add);
+        ws.exceptionHandler(receivedExceptions::add);
+        ws.closeHandler(v -> testComplete());
+      });
+    });
+    await();
+    return new SocketMessages(receivedMessages, receivedExceptions);
+  }
+
+  private static class SocketMessages {
+    private final List<String> receivedMessages;
+    private final List<Throwable> receivedExceptions;
+
+    public SocketMessages(List<String> receivedMessages, List<Throwable> receivedExceptions) {
+      this.receivedMessages = receivedMessages;
+      this.receivedExceptions = receivedExceptions;
+    }
+
+    public List<String> getReceivedMessages() {
+      return receivedMessages;
+    }
+
+    public List<Throwable> getReceivedExceptions() {
+      return receivedExceptions;
+    }
+  }
+
+  @Test
   public void testWebsocketPauseAndResume() {
     client.close();
     client = vertx.createHttpClient(new HttpClientOptions().setConnectTimeout(1000));
-    String path = "/some/path";
     this.server = vertx.createHttpServer(new HttpServerOptions().setAcceptBacklog(1).setPort(HttpTestBase.DEFAULT_HTTP_PORT));
     AtomicBoolean paused = new AtomicBoolean();
     ReadStream<ServerWebSocket> stream = server.websocketStream();
@@ -958,24 +1259,44 @@ public class WebsocketTest extends VertxTestBase {
       assertTrue(listenAR.succeeded());
       stream.pause();
       paused.set(true);
-      client.websocketStream(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, path).
-          exceptionHandler(err -> {
-            assertTrue(paused.get());
-            assertTrue(err instanceof WebSocketHandshakeException);
-            paused.set(false);
-            stream.resume();
-            client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, path, ws -> {
-              ws.handler(buffer -> {
-                assertEquals("whatever", buffer.toString("UTF-8"));
-                ws.closeHandler(v2 -> {
-                  testComplete();
-                });
-              });
+      connectUntilWebsocketHandshakeException(client, 0, res -> {
+        if (!res.succeeded()) {
+          fail(new AssertionError("Was expecting error to be WebSocketHandshakeException", res.cause()));
+        }
+        assertTrue(paused.get());
+        paused.set(false);
+        stream.resume();
+        client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/some/path", ws -> {
+          ws.handler(buffer -> {
+            assertEquals("whatever", buffer.toString("UTF-8"));
+            ws.closeHandler(v2 -> {
+              testComplete();
             });
-          }).
-          handler(ws -> fail());
+          });
+        });
+      });
     });
     await();
+  }
+
+  private void connectUntilWebsocketHandshakeException(HttpClient client, int count, Handler<AsyncResult<Void>> doneHandler) {
+    vertx.runOnContext(v -> {
+      client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/some/path", ws -> {
+        if (count < 100) {
+          connectUntilWebsocketHandshakeException(client, count + 1, doneHandler);
+        } else {
+          doneHandler.handle(Future.failedFuture(new AssertionError()));
+        }
+      }, err -> {
+        if (err instanceof WebSocketHandshakeException || err instanceof IOException) {
+          doneHandler.handle(Future.succeededFuture());
+        } else if (count < 100) {
+          connectUntilWebsocketHandshakeException(client, count + 1, doneHandler);
+        } else {
+          doneHandler.handle(Future.failedFuture(err));
+        }
+      });
+    });
   }
 
   @Test
@@ -1002,7 +1323,7 @@ public class WebsocketTest extends VertxTestBase {
   public void testWebsocketStreamCallbackAsynchronously() {
     this.server = vertx.createHttpServer(new HttpServerOptions().setPort(HttpTestBase.DEFAULT_HTTP_PORT));
     AtomicInteger done = new AtomicInteger();
-    ServerWebSocketStream stream = server.websocketStream();
+    ReadStream<ServerWebSocket> stream = server.websocketStream();
     stream.handler(req -> { });
     ThreadLocal<Object> stack = new ThreadLocal<>();
     stack.set(true);
@@ -1139,7 +1460,8 @@ public class WebsocketTest extends VertxTestBase {
             buff.appendBuffer(b);
           });
           ws.endHandler(v -> {
-            assertEquals("helloworld", buff.toString());
+            // Last two bytes are status code payload
+            assertEquals("helloworld", buff.toString("UTF-8"));
             testComplete();
           });
           ws.write(Buffer.buffer("foo"));
@@ -1148,7 +1470,60 @@ public class WebsocketTest extends VertxTestBase {
     await();
   }
 
+  @Test
+  public void testUnmaskedFrameRequest(){
 
+    client = vertx.createHttpClient(new HttpClientOptions().setSendUnmaskedFrames(true));
+    server = vertx.createHttpServer(new HttpServerOptions().setPort(HttpTestBase.DEFAULT_HTTP_PORT).setAcceptUnmaskedFrames(true));
+    server.requestHandler(req -> {
+      req.response().setChunked(true).write("connect");
+    });
+    server.websocketHandler(ws -> {
+
+      ws.handler(new Handler<Buffer>() {
+        public void handle(Buffer data) {
+          assertEquals(data.toString(), "first unmasked frame");
+          testComplete();
+        }
+      });
+
+    });
+    server.listen(onSuccess(server -> {
+      client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/", ws -> {
+        ws.writeFinalTextFrame("first unmasked frame");
+      });
+    }));
+    await();
+  }
+
+
+  @Test
+  public void testInvalidUnmaskedFrameRequest(){
+
+    client = vertx.createHttpClient(new HttpClientOptions().setSendUnmaskedFrames(true));
+    server = vertx.createHttpServer(new HttpServerOptions().setPort(HttpTestBase.DEFAULT_HTTP_PORT));
+    server.requestHandler(req -> {
+      req.response().setChunked(true).write("connect");
+    });
+    server.websocketHandler(ws -> {
+
+      ws.exceptionHandler(exception -> {
+        testComplete();
+      });
+
+      ws.handler(result -> {
+        fail("Cannot decode unmasked message because I require masked frame as configured");
+      });
+    });
+
+    server.listen(onSuccess(server -> {
+      client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/", ws -> {
+        ws.writeFinalTextFrame("first unmasked frame");
+      });
+    }));
+
+    await();
+  }
 
   @Test
   public void testUpgradeInvalidRequest() {
@@ -1249,7 +1624,7 @@ public class WebsocketTest extends VertxTestBase {
     server.listen(ar -> {
       assertTrue(ar.succeeded());
       workers.get(0).runOnContext(v -> {
-        WebSocketStream webSocketStream = client.websocketStream(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/");
+        ReadStream<WebSocket> webSocketStream = client.websocketStream(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/");
         webSocketStream.handler(ws -> {
           ws.handler(buf -> {
             assertEquals("hello", buf.toString());
@@ -1263,10 +1638,9 @@ public class WebsocketTest extends VertxTestBase {
 
   @Test
   public void httpClientWebsocketConnectionFailureHandlerShouldBeCalled() throws Exception {
-    String nonExistingHost = "idont.even.exist";
     int port = 7867;
     HttpClient client = vertx.createHttpClient();
-    client.websocket(port, nonExistingHost, "", websocket -> {
+    client.websocket(port, "localhost", "", websocket -> {
       websocket.handler(data -> {
         fail("connection should not succeed");
       });
@@ -1277,7 +1651,7 @@ public class WebsocketTest extends VertxTestBase {
   @Test
   public void testClientWebsocketWithHttp2Client() throws Exception {
     client.close();
-    client = vertx.createHttpClient(new HttpClientOptions().setH2cUpgrade(false).setProtocolVersion(HttpVersion.HTTP_2));
+    client = vertx.createHttpClient(new HttpClientOptions().setHttp2ClearTextUpgrade(false).setProtocolVersion(HttpVersion.HTTP_2));
     server = vertx.createHttpServer(new HttpServerOptions().setPort(HttpTestBase.DEFAULT_HTTP_PORT));
     server.requestHandler(req -> {
       req.response().setChunked(true).write("connect");
@@ -1298,4 +1672,548 @@ public class WebsocketTest extends VertxTestBase {
     await();
   }
 
+  @Test
+  public void testClientWebsocketConnectionCloseOnBadResponseWithKeepalive() throws Throwable {
+    // issue #1757
+    doTestClientWebsocketConnectionCloseOnBadResponse(true);
+  }
+
+  @Test
+  public void testClientWebsocketConnectionCloseOnBadResponseWithoutKeepalive() throws Throwable {
+    doTestClientWebsocketConnectionCloseOnBadResponse(false);
+  }
+
+  final BlockingQueue<Throwable> resultQueue = new ArrayBlockingQueue<Throwable>(10);
+
+  void addResult(Throwable result) {
+    try {
+      resultQueue.put(result);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
+  }
+
+  private void doTestClientWebsocketConnectionCloseOnBadResponse(boolean keepAliveInOptions) throws Throwable {
+    final Exception serverGotCloseException = new Exception();
+
+    netServer = vertx.createNetServer().connectHandler(sock -> {
+      final Buffer fullReq = Buffer.buffer(230);
+      sock.handler(b -> {
+        fullReq.appendBuffer(b);
+        String reqPart = b.toString();
+        if (fullReq.toString().contains("\r\n\r\n")) {
+          try {
+            String content = "0123456789";
+            content = content + content;
+            content = content + content + content + content + content;
+            String resp = "HTTP/1.1 200 OK\r\n";
+            if (keepAliveInOptions) {
+              resp += "Connection: close\r\n";
+            }
+            resp += "Content-Length: 100\r\n\r\n" + content;
+            sock.write(Buffer.buffer(resp.getBytes("ASCII")));
+          } catch (UnsupportedEncodingException e) {
+            addResult(e);
+          }
+        }
+      });
+      sock.closeHandler(v -> {
+        addResult(serverGotCloseException);
+      });
+    }).listen(ar -> {
+      if (ar.failed()) {
+        addResult(ar.cause());
+        return;
+      }
+      NetServer server = ar.result();
+      int port = server.actualPort();
+
+      HttpClientOptions opts = new HttpClientOptions().setKeepAlive(keepAliveInOptions);
+      client.close();
+      client = vertx.createHttpClient(opts).websocket(port, "localhost", "/", ws -> {
+        addResult(new AssertionError("Websocket unexpectedly connected"));
+        ws.close();
+      }, t -> {
+        addResult(t);
+      });
+    });
+
+    boolean serverGotClose = false;
+    boolean clientGotCorrectException = false;
+    while (!serverGotClose || !clientGotCorrectException) {
+      Throwable result = resultQueue.poll(20, TimeUnit.SECONDS);
+      if (result == null) {
+        throw new AssertionError("Timed out waiting for expected state, current: serverGotClose = " + serverGotClose + ", clientGotCorrectException = " + clientGotCorrectException);
+      } else if (result == serverGotCloseException) {
+        serverGotClose = true;
+      } else if (result instanceof WebsocketRejectedException
+              && ((WebsocketRejectedException)result).getStatus() == 200) {
+        clientGotCorrectException = true;
+      } else {
+        throw result;
+      }
+    }
+  }
+
+  @Test
+  public void testClearClientSslOptions() {
+    SelfSignedCertificate certificate = SelfSignedCertificate.create();
+    HttpServerOptions serverOptions = new HttpServerOptions().setPort(HttpTestBase.DEFAULT_HTTPS_PORT)
+      .setSsl(true)
+      .setKeyCertOptions(certificate.keyCertOptions());
+    HttpClientOptions clientOptions = new HttpClientOptions()
+      .setTrustAll(true)
+      .setVerifyHost(false);
+    client = vertx.createHttpClient(clientOptions);
+    server = vertx.createHttpServer(serverOptions).websocketHandler(WebSocketBase::close).listen(onSuccess(server -> {
+      RequestOptions requestOptions = new RequestOptions().setPort(HttpTestBase.DEFAULT_HTTPS_PORT).setSsl(true);
+      client.websocket(requestOptions, ws -> {
+        ws.closeHandler(v -> {
+          testComplete();
+        });
+      });
+    }));
+    await();
+  }
+
+  @Test
+  public void testServerWebsocketPingPong() {
+    server = vertx.createHttpServer(new HttpServerOptions().setIdleTimeout(1).setPort(HttpTestBase.DEFAULT_HTTP_PORT).setHost(HttpTestBase.DEFAULT_HTTP_HOST));
+    server.websocketHandler(ws -> {
+      ws.pongHandler(buff -> {
+        assertEquals("ping", buff.toString());
+        testComplete();
+      });
+      ws.writePing(Buffer.buffer("ping"));
+    }).listen(onSuccess(v -> {
+      client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/", ws -> {});
+    }));
+    await();
+  }
+
+  @Test
+  public void testServerWebsocketPingExceeds125Bytes() {
+    testServerWebsocketPingPongCheck(255, ws -> {
+      try {
+        ws.writePing(Buffer.buffer(randomAlphaString(126)));
+      } catch(Throwable expected) {
+        assertEquals("Ping cannot exceed maxWebSocketFrameSize or 125 bytes", expected.getMessage());
+        ws.close();
+        testComplete();
+      }
+    });
+  }
+
+  @Test
+  public void testServerWebsocketPongExceeds125Bytes() {
+    testServerWebsocketPingPongCheck(255, ws -> {
+      try {
+        ws.writePong(Buffer.buffer(randomAlphaString(126)));
+      } catch(Throwable expected) {
+        assertEquals("Pong cannot exceed maxWebSocketFrameSize or 125 bytes", expected.getMessage());
+        ws.close();
+        testComplete();
+      }
+    });
+  }
+
+  @Test
+  public void testServerWebsocketPingExceedsMaxFrameSize() {
+    testServerWebsocketPingPongCheck(100, ws -> {
+      try {
+        ws.writePing(Buffer.buffer(randomAlphaString(101)));
+      } catch(Throwable expected) {
+        assertEquals("Ping cannot exceed maxWebSocketFrameSize or 125 bytes", expected.getMessage());
+        ws.close();
+        testComplete();
+      }
+    });
+  }
+
+  @Test
+  public void testServerWebsocketPongExceedsMaxFrameSize() {
+    testServerWebsocketPingPongCheck(100, ws -> {
+      try {
+        ws.writePong(Buffer.buffer(randomAlphaString(101)));
+      } catch(Throwable expected) {
+        assertEquals("Pong cannot exceed maxWebSocketFrameSize or 125 bytes", expected.getMessage());
+        ws.close();
+        testComplete();
+      }
+    });
+  }
+
+  private void testServerWebsocketPingPongCheck(int maxFrameSize, Consumer<ServerWebSocket> check) {
+    server = vertx.createHttpServer(new HttpServerOptions().setIdleTimeout(1).setPort(HttpTestBase.DEFAULT_HTTP_PORT).setHost(HttpTestBase.DEFAULT_HTTP_HOST).setMaxWebsocketFrameSize(maxFrameSize));
+    server.websocketHandler(ws -> {
+      ws.pongHandler(buff -> fail());
+      check.accept(ws);
+    }).listen(onSuccess(v -> {
+      client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/", ws -> {});
+    }));
+    await();
+  }
+
+  @Test
+  public void testServerWebsocketSendPingExceeds125Bytes() {
+    //Netty will prevent us from encoding a pingBody greater than 126 bytes by silently throwing an error in the background
+    String pingBody = randomAlphaString(126);
+    Integer maxFrameSize = 256;
+    server = vertx.createHttpServer(new HttpServerOptions().setIdleTimeout(1).setPort(HttpTestBase.DEFAULT_HTTP_PORT).setHost(HttpTestBase.DEFAULT_HTTP_HOST).setMaxWebsocketFrameSize(maxFrameSize));
+    server.websocketHandler(ws -> {
+      ws.pongHandler(buff -> fail());
+      ws.writeFrame(WebSocketFrame.pingFrame(Buffer.buffer(pingBody)));
+      vertx.setTimer(2000, id -> testComplete());
+    }).listen(onSuccess(v -> {
+      client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/", ws -> {});
+    }));
+    await();
+  }
+
+  @Test
+  public void testClientWebsocketSendPingExceeds125Bytes() {
+    //Netty will prevent us from encoding a pingBody greater than 126 bytes by silently throwing an error in the background
+    String pingBody = randomAlphaString(126);
+    Integer maxFrameSize = 256;
+    server = vertx.createHttpServer(new HttpServerOptions().setIdleTimeout(1).setPort(HttpTestBase.DEFAULT_HTTP_PORT).setHost(HttpTestBase.DEFAULT_HTTP_HOST).setMaxWebsocketFrameSize(maxFrameSize));
+    server.websocketHandler(ws -> { }).listen(onSuccess(v -> {
+      client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/", ws -> {
+        ws.pongHandler(buffer -> fail());
+        ws.writeFrame(WebSocketFrame.pingFrame(Buffer.buffer(pingBody)));
+        vertx.setTimer(2000, id -> testComplete());
+      });
+    }));
+    await();
+  }
+
+  @Test
+  public void testServerWebsocketSendPongExceeds125Bytes() {
+    //Netty will prevent us from encoding a pingBody greater than 126 bytes by silently throwing an error in the background
+    String pingBody = randomAlphaString(126);
+    Integer maxFrameSize = 256;
+    server = vertx.createHttpServer(new HttpServerOptions().setIdleTimeout(1).setPort(HttpTestBase.DEFAULT_HTTP_PORT).setHost(HttpTestBase.DEFAULT_HTTP_HOST).setMaxWebsocketFrameSize(maxFrameSize));
+    server.websocketHandler(ws -> {
+      ws.writeFrame(WebSocketFrame.pongFrame(Buffer.buffer(pingBody)));
+    }).listen(onSuccess(v -> {
+      client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/", ws -> {
+        ws.pongHandler(buff -> fail());
+        vertx.setTimer(2000, id -> testComplete());
+      });
+    }));
+    await();
+  }
+
+  @Test
+  public void testClientWebsocketSendPongExceeds125Bytes() {
+    //Netty will prevent us from encoding a pingBody greater than 126 bytes by silently throwing an error in the background
+    String pingBody = randomAlphaString(126);
+    Integer maxFrameSize = 256;
+    server = vertx.createHttpServer(new HttpServerOptions().setIdleTimeout(1).setPort(HttpTestBase.DEFAULT_HTTP_PORT).setHost(HttpTestBase.DEFAULT_HTTP_HOST).setMaxWebsocketFrameSize(maxFrameSize));
+    server.websocketHandler(ws -> {
+      ws.pongHandler(buff -> fail());
+      vertx.setTimer(2000, id -> testComplete());
+    }).listen(onSuccess(v -> {
+      client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/", ws -> {
+        ws.writeFrame(WebSocketFrame.pongFrame(Buffer.buffer(pingBody)));
+      });
+    }));
+    await();
+  }
+
+  @Test
+  public void testServerWebsocketReceivePongExceedsMaxFrameSize() {
+    String pingBody = randomAlphaString(113);
+    Integer maxFrameSize = 64;
+    Buffer ping1 = Buffer.buffer(Buffer.buffer(pingBody.getBytes()).getBytes(0, maxFrameSize));
+    Buffer ping2 = Buffer.buffer(Buffer.buffer(pingBody.getBytes()).getBytes(maxFrameSize, pingBody.length()));
+
+    server = vertx.createHttpServer(new HttpServerOptions().setIdleTimeout(1).setPort(HttpTestBase.DEFAULT_HTTP_PORT).setHost(HttpTestBase.DEFAULT_HTTP_HOST).setMaxWebsocketFrameSize(maxFrameSize));
+    server.websocketHandler(ws -> {
+      List<Buffer> pongs = new ArrayList<>();
+      ws.pongHandler(pong -> {
+        pongs.add(pong);
+        if (pongs.size() == 2) {
+          assertEquals(pongs, Arrays.asList(ping1, ping2));
+          testComplete();
+        }
+      });
+    }).listen(v -> {
+      client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/", ws -> {
+        try {
+          ws.writeFrame(new WebSocketFrameImpl(FrameType.PONG, ping1.copy().getByteBuf(), false));
+          ws.writeFrame(new WebSocketFrameImpl(FrameType.PONG, ping2.copy().getByteBuf(), true));
+        } catch(Throwable t) {
+          fail(t);
+        }
+      });
+    });
+    await();
+  }
+
+  @Test
+  public void testClientWebsocketReceivePongExceedsMaxFrameSize() {
+    String pingBody = randomAlphaString(113);
+    Integer maxFrameSize = 64;
+    Buffer ping1 = Buffer.buffer(Buffer.buffer(pingBody.getBytes()).getBytes(0, maxFrameSize));
+    Buffer ping2 = Buffer.buffer(Buffer.buffer(pingBody.getBytes()).getBytes(maxFrameSize, pingBody.length()));
+
+    server = vertx.createHttpServer(new HttpServerOptions().setIdleTimeout(1).setPort(HttpTestBase.DEFAULT_HTTP_PORT).setHost(HttpTestBase.DEFAULT_HTTP_HOST).setMaxWebsocketFrameSize(maxFrameSize));
+    server.websocketHandler(ws -> {
+      try {
+        ws.writeFrame(new WebSocketFrameImpl(FrameType.PONG, ping1.copy().getByteBuf(), false));
+        ws.writeFrame(new WebSocketFrameImpl(FrameType.PONG, ping2.copy().getByteBuf(), true));
+      } catch(Throwable t) {
+        fail(t);
+      }
+    }).listen(v -> {
+      client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/", ws -> {
+        List<Buffer> pongs = new ArrayList<>();
+        ws.pongHandler(pong -> {
+          pongs.add(pong);
+          if (pongs.size() == 2) {
+            assertEquals(pongs, Arrays.asList(ping1, ping2));
+            testComplete();
+          }
+        });
+      });
+    });
+    await();
+  }
+
+  @Test
+  public void testServerWebsocketReceivePingExceedsMaxFrameSize() {
+    String pingBody = randomAlphaString(113);
+    Integer maxFrameSize = 64;
+    Buffer ping1 = Buffer.buffer(Buffer.buffer(pingBody.getBytes()).getBytes(0, maxFrameSize));
+    Buffer ping2 = Buffer.buffer(Buffer.buffer(pingBody.getBytes()).getBytes(maxFrameSize, pingBody.length()));
+
+    server = vertx.createHttpServer(new HttpServerOptions().setIdleTimeout(1).setPort(HttpTestBase.DEFAULT_HTTP_PORT).setHost(HttpTestBase.DEFAULT_HTTP_HOST).setMaxWebsocketFrameSize(maxFrameSize));
+    server.websocketHandler(ws -> {
+
+    }).listen(onSuccess(v -> {
+      client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/", ws -> {
+        List<Buffer> pongs = new ArrayList<>();
+        ws.pongHandler(pong -> {
+          pongs.add(pong);
+          if (pongs.size() == 2) {
+            assertEquals(pongs, Arrays.asList(ping1, ping2));
+            testComplete();
+          }
+        });
+        try {
+          ws.writeFrame(new WebSocketFrameImpl(FrameType.PING, ping1.copy().getByteBuf(), false));
+          ws.writeFrame(new WebSocketFrameImpl(FrameType.PING, ping2.copy().getByteBuf(), true));
+        } catch(Throwable t) {
+          fail(t);
+        }
+      });
+    }));
+    await();
+  }
+
+  @Test
+  public void testClientWebsocketReceivePingExceedsMaxFrameSize() {
+    String pingBody = randomAlphaString(113);
+    Integer maxFrameSize = 64;
+    Buffer ping1 = Buffer.buffer(Buffer.buffer(pingBody.getBytes()).getBytes(0, maxFrameSize));
+    Buffer ping2 = Buffer.buffer(Buffer.buffer(pingBody.getBytes()).getBytes(maxFrameSize, pingBody.length()));
+
+    server = vertx.createHttpServer(new HttpServerOptions().setIdleTimeout(1).setPort(HttpTestBase.DEFAULT_HTTP_PORT).setHost(HttpTestBase.DEFAULT_HTTP_HOST).setMaxWebsocketFrameSize(maxFrameSize));
+    server.websocketHandler(ws -> {
+
+    }).listen(onSuccess(v -> {
+      client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/", ws -> {
+        List<Buffer> pongs = new ArrayList<>();
+        ws.pongHandler(pong -> {
+          pongs.add(pong);
+          if (pongs.size() == 2) {
+            assertEquals(pongs, Arrays.asList(ping1, ping2));
+            testComplete();
+          }
+        });
+        try {
+          ws.writeFrame(new WebSocketFrameImpl(FrameType.PING, ping1.copy().getByteBuf(), false));
+          ws.writeFrame(new WebSocketFrameImpl(FrameType.PING, ping2.copy().getByteBuf(), true));
+        } catch(Throwable t) {
+          fail(t);
+        }
+      });
+    }));
+    await();
+  }
+
+  @Test
+  public void testClientWebsocketPingPong() {
+    server = vertx.createHttpServer(new HttpServerOptions().setIdleTimeout(1).setPort(HttpTestBase.DEFAULT_HTTP_PORT).setHost(HttpTestBase.DEFAULT_HTTP_HOST));
+    server.websocketHandler(ws -> {
+    }).listen(onSuccess(v -> {
+      client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/", ws -> {
+        ws.pongHandler( pong -> {
+          assertEquals("ping", pong.toString());
+          testComplete();
+        });
+        ws.writePing(Buffer.buffer("ping"));
+      });
+    }));
+    await();
+  }
+
+  @Test
+  public void testWebsocketAbs() {
+    SelfSignedCertificate certificate = SelfSignedCertificate.create();
+    HttpServerOptions serverOptions = new HttpServerOptions().setPort(HttpTestBase.DEFAULT_HTTPS_PORT)
+      .setSsl(true)
+      .setKeyCertOptions(certificate.keyCertOptions());
+    HttpClientOptions clientOptions = new HttpClientOptions()
+      .setTrustAll(true)
+      .setVerifyHost(false);
+    client = vertx.createHttpClient(clientOptions);
+    server = vertx.createHttpServer(serverOptions).requestHandler(request -> {
+      if ("/test".equals(request.path())) {
+        request.upgrade().close();
+      } else {
+        request.response().end();
+      }
+    }).listen(onSuccess(server -> {
+      String url = "wss://" + clientOptions.getDefaultHost() + ":" + HttpTestBase.DEFAULT_HTTPS_PORT + "/test";
+      client.websocketAbs(url, null, null, null, ws -> {
+        ws.closeHandler(v -> {
+          testComplete();
+        });
+      }, null);
+    }));
+    await();
+  }
+
+  @Test
+  public void testCloseStatusCodeFromServer() throws InterruptedException {
+    CountDownLatch latch = new CountDownLatch(2);
+    client = vertx.createHttpClient();
+    server = vertx.createHttpServer(new HttpServerOptions().setPort(HttpTestBase.DEFAULT_HTTP_PORT))
+      .websocketHandler(socket -> {
+        socket.closeHandler(a -> {
+          latch.countDown();
+        });
+        vertx.setTimer(1000, (ar) -> socket.close());
+      })
+      .listen(ar -> {
+        client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/", ws -> {
+          ws.frameHandler(frame -> {
+            assertEquals(1000, frame.binaryData().getByteBuf().getShort(0));
+            assertEquals(1000, frame.closeStatusCode());
+            assertNull(frame.closeReason());
+            latch.countDown();
+          });
+        });
+    });
+    awaitLatch(latch);
+  }
+
+  @Test
+  public void testCloseStatusCodeFromClient() throws InterruptedException {
+    CountDownLatch latch = new CountDownLatch(2);
+    client = vertx.createHttpClient();
+    server = vertx.createHttpServer(new HttpServerOptions().setPort(HttpTestBase.DEFAULT_HTTP_PORT))
+      .websocketHandler(socket -> {
+        socket.closeHandler(a -> {
+          latch.countDown();
+        });
+        socket.frameHandler(frame -> {
+          assertEquals(1000, frame.binaryData().getByteBuf().getShort(0));
+          assertEquals(1000, frame.closeStatusCode());
+          assertNull(frame.closeReason());
+          latch.countDown();
+        });
+      })
+      .listen(ar -> {
+        client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/", ws -> {
+          ws.close();
+        });
+      });
+    awaitLatch(latch);
+  }
+
+  @Test
+  public void testCloseFrame() throws InterruptedException {
+    CountDownLatch latch = new CountDownLatch(3);
+    client = vertx.createHttpClient();
+    server = vertx.createHttpServer(new HttpServerOptions().setPort(HttpTestBase.DEFAULT_HTTP_PORT))
+      .websocketHandler(socket -> {
+        socket.closeHandler(a -> {
+          latch.countDown();
+        });
+        socket.frameHandler(frame -> {
+          if (frame.isText()) {
+            assertIllegalStateException(frame::closeStatusCode);
+          } else {
+            assertEquals(frame.closeReason(), "It was a good talk");
+            assertEquals(frame.closeStatusCode(), 1001);
+          }
+          latch.countDown();
+        });
+      })
+      .listen(ar -> {
+        client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/", ws -> {
+          ws.writeTextMessage("Hello");
+          ws.close((short)1001, "It was a good talk");
+        });
+      });
+    awaitLatch(latch);
+  }
+
+  @Test
+  public void testCloseCustomPayloadFromServer() throws InterruptedException {
+    final String REASON = "I'm moving away!";
+    final short STATUS_CODE = (short)1001;
+
+    CountDownLatch latch = new CountDownLatch(2);
+    client = vertx.createHttpClient();
+    server = vertx.createHttpServer(new HttpServerOptions().setPort(HttpTestBase.DEFAULT_HTTP_PORT))
+      .websocketHandler(socket -> {
+        socket.closeHandler(a -> {
+          latch.countDown();
+        });
+        vertx.setTimer(1000, (ar) -> socket.close(STATUS_CODE, REASON));
+      })
+      .listen(ar -> {
+        client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/", ws -> {
+          ws.frameHandler(frame -> {
+            assertEquals(REASON, frame.binaryData().getByteBuf().readerIndex(2).toString(StandardCharsets.UTF_8));
+            assertEquals(STATUS_CODE, frame.binaryData().getByteBuf().getShort(0));
+            assertEquals(REASON, frame.closeReason());
+            assertEquals(STATUS_CODE, frame.closeStatusCode());
+            latch.countDown();
+          });
+        });
+      });
+    awaitLatch(latch);
+  }
+
+  @Test
+  public void testCloseCustomPayloadFromClient() throws InterruptedException {
+    final String REASON = "I'm moving away!";
+    final short STATUS_CODE = (short)1001;
+
+    CountDownLatch latch = new CountDownLatch(2);
+    client = vertx.createHttpClient();
+    server = vertx.createHttpServer(new HttpServerOptions().setPort(HttpTestBase.DEFAULT_HTTP_PORT))
+      .websocketHandler(socket -> {
+        socket.closeHandler(a -> {
+          latch.countDown();
+        });
+        socket.frameHandler(frame -> {
+          assertEquals(REASON, frame.binaryData().getByteBuf().readerIndex(2).toString(StandardCharsets.UTF_8));
+          assertEquals(STATUS_CODE, frame.binaryData().getByteBuf().getShort(0));
+          assertEquals(REASON, frame.closeReason());
+          assertEquals(STATUS_CODE, frame.closeStatusCode());
+          latch.countDown();
+        });
+      })
+      .listen(ar -> {
+        client.websocket(HttpTestBase.DEFAULT_HTTP_PORT, HttpTestBase.DEFAULT_HTTP_HOST, "/", ws -> {
+          ws.close(STATUS_CODE, REASON);
+        });
+      });
+    awaitLatch(latch);
+  }
 }

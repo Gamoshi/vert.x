@@ -1,17 +1,12 @@
 /*
- * Copyright (c) 2011-2013 The original author or authors
- *  ------------------------------------------------------
- *  All rights reserved. This program and the accompanying materials
- *  are made available under the terms of the Eclipse Public License v1.0
- *  and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *      The Eclipse Public License is available at
- *      http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *      The Apache License v2.0 is available at
- *      http://www.opensource.org/licenses/apache2.0.php
- *
- *  You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.test.core;
@@ -22,6 +17,8 @@ import io.vertx.core.http.HttpClientOptions;
 import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.http.HttpVersion;
 import io.vertx.core.net.JksOptions;
+import io.vertx.test.core.tls.Cert;
+import io.vertx.test.core.tls.Trust;
 
 /**
  * @author <a href="mailto:julien@julienviet.com">Julien Viet</a>
@@ -35,13 +32,14 @@ public class Http2TestBase extends HttpTestBase {
         .setUseAlpn(true)
         .setSsl(true)
         .addEnabledCipherSuite("TLS_RSA_WITH_AES_128_CBC_SHA") // Non Diffie-helman -> debuggable in wireshark
-        .setKeyStoreOptions((JksOptions) TLSCert.JKS.getServerKeyCertOptions());
+        .setKeyStoreOptions(Cert.SERVER_JKS.get());
   };
 
   static HttpClientOptions createHttp2ClientOptions() {
     return new HttpClientOptions().
         setUseAlpn(true).
-        setTrustStoreOptions((JksOptions) TLSCert.JKS.getClientTrustOptions()).
+        setSsl(true).
+        setTrustStoreOptions(Trust.SERVER_JKS.get()).
         setProtocolVersion(HttpVersion.HTTP_2);
   }
 

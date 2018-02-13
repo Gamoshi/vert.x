@@ -1,23 +1,19 @@
 /*
- * Copyright (c) 2011-2013 The original author or authors
- *  ------------------------------------------------------
- *  All rights reserved. This program and the accompanying materials
- *  are made available under the terms of the Eclipse Public License v1.0
- *  and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *      The Eclipse Public License is available at
- *      http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *      The Apache License v2.0 is available at
- *      http://www.opensource.org/licenses/apache2.0.php
- *
- *  You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.core.metrics;
 
 import io.vertx.codegen.annotations.DataObject;
 import io.vertx.core.json.JsonObject;
+import io.vertx.core.spi.VertxMetricsFactory;
 
 /**
  * Vert.x metrics base configuration, this class can be extended by provider implementations to configure
@@ -25,7 +21,7 @@ import io.vertx.core.json.JsonObject;
  *
  * @author <a href="mailto:julien@julienviet.com">Julien Viet</a>
  */
-@DataObject(generateConverter = true)
+@DataObject(generateConverter = true, publicConverter = false)
 public class MetricsOptions {
 
   /**
@@ -35,6 +31,7 @@ public class MetricsOptions {
 
   private boolean enabled;
   private JsonObject json; // Keep a copy of the original json, so we don't lose info when building options subclasses
+  private VertxMetricsFactory factory;
 
   /**
    * Default constructor
@@ -50,6 +47,7 @@ public class MetricsOptions {
    */
   public MetricsOptions(MetricsOptions other) {
     enabled = other.isEnabled();
+    factory = other.factory;
   }
 
   /**
@@ -80,6 +78,36 @@ public class MetricsOptions {
    */
   public MetricsOptions setEnabled(boolean enable) {
     this.enabled = enable;
+    return this;
+  }
+
+  /**
+   * Get the metrics factory to be used when metrics are enabled.
+   * <p>
+   * If the metrics factory has been programmatically set here, then that will be used when metrics are enabled
+   * for creating the {@link io.vertx.core.spi.metrics.VertxMetrics} instance.
+   * <p>
+   * Otherwise Vert.x attempts to locate a metrics factory implementation on the classpath.
+   *
+   * @return the metrics factory
+   */
+  public VertxMetricsFactory getFactory() {
+    return factory;
+  }
+
+  /**
+   * Programmatically set the metrics factory to be used when metrics are enabled.
+   * <p>
+   * Only valid if {@link MetricsOptions#isEnabled} = true.
+   * <p>
+   * Normally Vert.x will look on the classpath for a metrics factory implementation, but if you want to set one
+   * programmatically you can use this method.
+   *
+   * @param factory the metrics factory
+   * @return a reference to this, so the API can be used fluently
+   */
+  public MetricsOptions setFactory(VertxMetricsFactory factory) {
+    this.factory = factory;
     return this;
   }
 

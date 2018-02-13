@@ -1,17 +1,12 @@
 /*
- * Copyright (c) 2011-2013 The original author or authors
- * ------------------------------------------------------
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *     The Eclipse Public License is available at
- *     http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *     The Apache License v2.0 is available at
- *     http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.core.streams;
@@ -70,8 +65,12 @@ public interface WriteStream<T> extends StreamBase {
 
   /**
    * Set the maximum size of the write queue to {@code maxSize}. You will still be able to write to the stream even
-   * if there is more than {@code maxSize} bytes in the write queue. This is used as an indicator by classes such as
+   * if there is more than {@code maxSize} items in the write queue. This is used as an indicator by classes such as
    * {@code Pump} to provide flow control.
+   * <p/>
+   * The value is defined by the implementation of the stream, e.g in bytes for a
+   * {@link io.vertx.core.net.NetSocket}, the number of {@link io.vertx.core.eventbus.Message} for a
+   * {@link io.vertx.core.eventbus.MessageProducer}, etc...
    *
    * @param maxSize  the max size of the write stream
    * @return a reference to this, so the API can be used fluently
@@ -89,9 +88,12 @@ public interface WriteStream<T> extends StreamBase {
 
   /**
    * Set a drain handler on the stream. If the write queue is full, then the handler will be called when the write
-   * queue has been reduced to maxSize / 2. See {@link Pump} for an example of this being used.
+   * queue is ready to accept buffers again. See {@link Pump} for an example of this being used.
+   * <p/>
+   * The stream implementation defines when the drain handler, for example it could be when the queue size has been
+   * reduced to {@code maxSize / 2}.
    *
-   * @param handler  the handler
+   * @param handler the handler
    * @return a reference to this, so the API can be used fluently
    */
   @Fluent

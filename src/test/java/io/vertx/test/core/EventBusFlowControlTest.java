@@ -1,12 +1,31 @@
+/*
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ *
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
+ *
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ */
+
 package io.vertx.test.core;
 
+import io.vertx.core.Context;
+import io.vertx.core.Vertx;
+import io.vertx.core.eventbus.DeliveryOptions;
 import io.vertx.core.eventbus.EventBus;
 import io.vertx.core.eventbus.MessageConsumer;
 import io.vertx.core.eventbus.MessageProducer;
 import org.junit.Test;
 
+import java.util.LinkedList;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
@@ -31,24 +50,65 @@ public class EventBusFlowControlTest extends VertxTestBase {
         testComplete();
       }
     });
+    vertx.runOnContext(v -> {
+      sendBatch(prod, wqms, numBatches, 0);
+    });
+    await();
+  }
 
-    sendBatch(prod, wqms, numBatches, 0);
+  @Test
+  public void testFlowControlWithOptions() {
+    MessageProducer<String> prod = eb.sender("some-address");
+    prod.deliveryOptions(new DeliveryOptions().addHeader("foo", "bar"));
+    int numBatches = 1000;
+    int wqms = 2000;
+    prod.setWriteQueueMaxSize(wqms);
+
+    MessageConsumer<String> consumer = eb.consumer("some-address");
+    AtomicInteger cnt = new AtomicInteger();
+    consumer.handler(msg -> {
+      int c = cnt.incrementAndGet();
+      if (c == numBatches * wqms) {
+        testComplete();
+      }
+    });
+
+    vertx.runOnContext(v -> {
+      sendBatch(prod, wqms, numBatches, 0);
+    });
     await();
   }
 
   private void sendBatch(MessageProducer<String> prod, int batchSize, int numBatches, int batchNumber) {
-    boolean drainHandlerSet = false;
-    for (int i = 0; i < batchSize; i++) {
-      prod.send("message-" + i);
-      if (prod.writeQueueFull() && !drainHandlerSet) {
+    while (batchNumber < numBatches) {
+      for (int i = 0; i < batchSize; i++) {
+        prod.send("message-" + i);
+      }
+      if (prod.writeQueueFull()) {
+        int nextBatch = batchNumber + 1;
         prod.drainHandler(v -> {
-          if (batchNumber < numBatches - 1) {
-            sendBatch(prod, batchSize, numBatches, batchNumber + 1);
-          }
+          sendBatch(prod, batchSize, numBatches, nextBatch);
         });
-        drainHandlerSet = true;
+        break;
+      } else {
+        batchNumber++;
       }
     }
+  }
+
+  @Test
+  public void testDrainHandlerCalledWhenQueueAlreadyDrained() throws Exception {
+    MessageConsumer<String> consumer = eb.consumer("some-address");
+    consumer.handler(msg -> {});
+    MessageProducer<String> prod = eb.sender("some-address");
+    prod.setWriteQueueMaxSize(1);
+    prod.write("msg");
+    assertTrue(prod.writeQueueFull());
+    waitUntil(() -> !prod.writeQueueFull());
+    prod.drainHandler(v -> {
+      testComplete();
+    });
+    await();
   }
 
   @Test
@@ -102,6 +162,37 @@ public class EventBusFlowControlTest extends VertxTestBase {
     assertTrue(drainHandlerSet);
     vertx.setTimer(500, tid -> testComplete());
     await();
+  }
+
+  @Test
+  public void testResumePausedProducer() {
+    BlockingQueue<Integer> sequence = new LinkedBlockingQueue<>();
+    AtomicReference<Context> handlerContext = new AtomicReference<>();
+    MessageConsumer<Integer> consumer = eb.consumer("some-address", msg -> {
+      if (sequence.isEmpty()) {
+        handlerContext.set(Vertx.currentContext());
+      } else {
+        assertEquals(Vertx.currentContext(), handlerContext.get());
+      }
+      sequence.add(msg.body());
+    });
+    consumer.pause();
+    MessageProducer<Integer> prod = eb.sender("some-address");
+    LinkedList<Integer> expected = new LinkedList<>();
+    int count = 0;
+    while (!prod.writeQueueFull()) {
+      int val = count++;
+      expected.add(val);
+      prod.send(val);
+    }
+    consumer.resume();
+    assertWaitUntil(() -> !prod.writeQueueFull());
+    int theCount = count;
+    assertWaitUntil(() -> sequence.size() == theCount);
+    while (expected.size() > 0) {
+      assertEquals(expected.removeFirst(), sequence.poll());
+    }
+    assertNotNull(handlerContext.get());
   }
 
   @Override

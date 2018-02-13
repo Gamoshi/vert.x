@@ -1,17 +1,12 @@
 /*
- * Copyright (c) 2011-2014 The original author or authors
- * ------------------------------------------------------
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *     The Eclipse Public License is available at
- *     http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *     The Apache License v2.0 is available at
- *     http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.core.net;
@@ -26,7 +21,7 @@ import io.vertx.core.json.JsonObject;
  *
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
-@DataObject(generateConverter = true)
+@DataObject(generateConverter = true, publicConverter = false)
 public class NetServerOptions extends TCPSSLOptions {
 
   // Server specific HTTP stuff
@@ -51,10 +46,16 @@ public class NetServerOptions extends TCPSSLOptions {
    */
   public static final ClientAuth DEFAULT_CLIENT_AUTH = ClientAuth.NONE;
 
+  /**
+   * Default value of whether the server supports SNI = false
+   */
+  public static final boolean DEFAULT_SNI = false;
+
   private int port;
   private String host;
   private int acceptBacklog;
-  private ClientAuth clientAuth = DEFAULT_CLIENT_AUTH;
+  private ClientAuth clientAuth;
+  private boolean sni;
 
   /**
    * Default constructor
@@ -75,6 +76,7 @@ public class NetServerOptions extends TCPSSLOptions {
     this.host = other.getHost();
     this.acceptBacklog = other.getAcceptBacklog();
     this.clientAuth = other.getClientAuth();
+    this.sni = other.isSni();
   }
 
   /**
@@ -86,6 +88,17 @@ public class NetServerOptions extends TCPSSLOptions {
     super(json);
     init();
     NetServerOptionsConverter.fromJson(json, this);
+  }
+
+  /**
+   * Convert to JSON
+   *
+   * @return the JSON
+   */
+  public JsonObject toJson() {
+    JsonObject json = super.toJson();
+    NetServerOptionsConverter.toJson(this, json);
+    return json;
   }
 
   @Override
@@ -103,6 +116,12 @@ public class NetServerOptions extends TCPSSLOptions {
   @Override
   public NetServerOptions setReuseAddress(boolean reuseAddress) {
     super.setReuseAddress(reuseAddress);
+    return this;
+  }
+
+  @Override
+  public NetServerOptions setReusePort(boolean reusePort) {
+    super.setReusePort(reusePort);
     return this;
   }
 
@@ -155,8 +174,24 @@ public class NetServerOptions extends TCPSSLOptions {
   }
 
   @Override
-  public NetServerOptions setSslEngine(SSLEngine sslEngine) {
-    super.setSslEngine(sslEngine);
+  public NetServerOptions setSslEngineOptions(SSLEngineOptions sslEngineOptions) {
+    super.setSslEngineOptions(sslEngineOptions);
+    return this;
+  }
+
+  @Override
+  public NetServerOptions setJdkSslEngineOptions(JdkSSLEngineOptions sslEngineOptions) {
+    return (NetServerOptions) super.setSslEngineOptions(sslEngineOptions);
+  }
+
+  @Override
+  public NetServerOptions setOpenSslEngineOptions(OpenSSLEngineOptions sslEngineOptions) {
+    return (NetServerOptions) super.setSslEngineOptions(sslEngineOptions);
+  }
+
+  @Override
+  public NetServerOptions setKeyCertOptions(KeyCertOptions options) {
+    super.setKeyCertOptions(options);
     return this;
   }
 
@@ -174,6 +209,12 @@ public class NetServerOptions extends TCPSSLOptions {
   @Override
   public NetServerOptions setPemKeyCertOptions(PemKeyCertOptions options) {
     return (NetServerOptions) super.setPemKeyCertOptions(options);
+  }
+
+  @Override
+  public NetServerOptions setTrustOptions(TrustOptions options) {
+    super.setTrustOptions(options);
+    return this;
   }
 
   @Override
@@ -202,6 +243,26 @@ public class NetServerOptions extends TCPSSLOptions {
   public NetServerOptions addEnabledSecureTransportProtocol(final String protocol) {
     super.addEnabledSecureTransportProtocol(protocol);
     return this;
+  }
+
+  @Override
+  public NetServerOptions removeEnabledSecureTransportProtocol(String protocol) {
+    return (NetServerOptions) super.removeEnabledSecureTransportProtocol(protocol);
+  }
+
+  @Override
+  public NetServerOptions setTcpFastOpen(boolean tcpFastOpen) {
+    return (NetServerOptions) super.setTcpFastOpen(tcpFastOpen);
+  }
+
+  @Override
+  public NetServerOptions setTcpCork(boolean tcpCork) {
+    return (NetServerOptions) super.setTcpCork(tcpCork);
+  }
+
+  @Override
+  public NetServerOptions setTcpQuickAck(boolean tcpQuickAck) {
+    return (NetServerOptions) super.setTcpQuickAck(tcpQuickAck);
   }
 
   @Override
@@ -311,6 +372,28 @@ public class NetServerOptions extends TCPSSLOptions {
   }
 
   @Override
+  public NetServerOptions setLogActivity(boolean logEnabled) {
+    return (NetServerOptions) super.setLogActivity(logEnabled);
+  }
+
+  /**
+   * @return whether the server supports Server Name Indication
+   */
+  public boolean isSni() {
+    return sni;
+  }
+
+  /**
+   * Set whether the server supports Server Name Indiciation
+   *
+   * @return a reference to this, so the API can be used fluently
+   */
+  public NetServerOptions setSni(boolean sni) {
+    this.sni = sni;
+    return this;
+  }
+
+  @Override
   public boolean equals(Object o) {
     if (this == o) return true;
     if (!(o instanceof NetServerOptions)) return false;
@@ -322,6 +405,7 @@ public class NetServerOptions extends TCPSSLOptions {
     if (clientAuth != that.clientAuth) return false;
     if (port != that.port) return false;
     if (host != null ? !host.equals(that.host) : that.host != null) return false;
+    if (sni != that.sni) return false;
 
     return true;
   }
@@ -333,6 +417,7 @@ public class NetServerOptions extends TCPSSLOptions {
     result = 31 * result + (host != null ? host.hashCode() : 0);
     result = 31 * result + acceptBacklog;
     result = 31 * result + clientAuth.hashCode();
+    result = 31 * result + (sni ? 1 : 0);
     return result;
   }
 
@@ -341,6 +426,6 @@ public class NetServerOptions extends TCPSSLOptions {
     this.host = DEFAULT_HOST;
     this.acceptBacklog = DEFAULT_ACCEPT_BACKLOG;
     this.clientAuth = DEFAULT_CLIENT_AUTH;
+    this.sni = DEFAULT_SNI;
   }
-
 }

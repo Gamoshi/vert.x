@@ -1,25 +1,28 @@
 /*
- * Copyright (c) 2011-2014 The original author or authors
- * ------------------------------------------------------
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *     The Eclipse Public License is available at
- *     http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *     The Apache License v2.0 is available at
- *     http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.core.impl;
 
-import io.vertx.core.*;
+import io.vertx.core.AsyncResult;
+import io.vertx.core.Future;
+import io.vertx.core.Handler;
+import io.vertx.core.Vertx;
+import io.vertx.core.VertxException;
+import io.vertx.core.VertxOptions;
 
-import java.io.*;
 import java.io.Closeable;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
 import java.net.URL;
 import java.net.URLDecoder;
 import java.nio.file.FileAlreadyExistsException;
@@ -29,6 +32,7 @@ import java.util.Enumeration;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -55,17 +59,24 @@ public class FileResolver {
   private static final String DEFAULT_CACHE_DIR_BASE = ".vertx";
   private static final String FILE_SEP = System.getProperty("file.separator");
   private static final boolean NON_UNIX_FILE_SEP = !FILE_SEP.equals("/");
-  private static final boolean ENABLE_CACHING = !Boolean.getBoolean(DISABLE_FILE_CACHING_PROP_NAME);
   private static final boolean ENABLE_CP_RESOLVING = !Boolean.getBoolean(DISABLE_CP_RESOLVING_PROP_NAME);
   private static final String CACHE_DIR_BASE = System.getProperty(CACHE_DIR_BASE_PROP_NAME, DEFAULT_CACHE_DIR_BASE);
+  private static final String JAR_URL_SEP = "!/";
+  private static final Pattern JAR_URL_SEP_PATTERN = Pattern.compile(JAR_URL_SEP);
 
   private final Vertx vertx;
   private final File cwd;
   private File cacheDir;
   private Thread shutdownHook;
+  private final boolean enableCaching;
 
   public FileResolver(Vertx vertx) {
+    this(vertx, VertxOptions.DEFAULT_FILE_CACHING_ENABLED);
+  }
+
+  public FileResolver(Vertx vertx, boolean enableCaching) {
     this.vertx = vertx;
+    this.enableCaching = enableCaching;
     String cwdOverride = System.getProperty("vertx.cwd");
     if (cwdOverride != null) {
       cwd = new File(cwdOverride).getAbsoluteFile();
@@ -97,31 +108,35 @@ public class FileResolver {
     if (!ENABLE_CP_RESOLVING) {
       return file;
     }
-    if (!file.exists()) {
-      // Look for it in local file cache
-      File cacheFile = new File(cacheDir, fileName);
-      if (ENABLE_CACHING && cacheFile.exists()) {
-        return cacheFile;
-      }
-      // Look for file on classpath
-      ClassLoader cl = getClassLoader();
-      if (NON_UNIX_FILE_SEP) {
-        fileName = fileName.replace(FILE_SEP, "/");
-      }
-      URL url = cl.getResource(fileName);
-      if (url != null) {
-        String prot = url.getProtocol();
-        switch (prot) {
-          case "file":
-            return unpackFromFileURL(url, fileName, cl);
-          case "jar":
-            return unpackFromJarURL(url, fileName, cl);
-          case "bundle": // Apache Felix, Knopflerfish
-          case "bundleentry": // Equinox
-          case "bundleresource": // Equinox
-            return unpackFromBundleURL(url);
-          default:
-            throw new IllegalStateException("Invalid url protocol: " + prot);
+    // We need to synchronized here to avoid 2 different threads to copy the file to the cache directory and so
+    // corrupting the content.
+    synchronized (this) {
+      if (!file.exists()) {
+        // Look for it in local file cache
+        File cacheFile = new File(cacheDir, fileName);
+        if (enableCaching && cacheFile.exists()) {
+          return cacheFile;
+        }
+        // Look for file on classpath
+        ClassLoader cl = getClassLoader();
+        if (NON_UNIX_FILE_SEP) {
+          fileName = fileName.replace(FILE_SEP, "/");
+        }
+        URL url = cl.getResource(fileName);
+        if (url != null) {
+          String prot = url.getProtocol();
+          switch (prot) {
+            case "file":
+              return unpackFromFileURL(url, fileName, cl);
+            case "jar":
+              return unpackFromJarURL(url, fileName, cl);
+            case "bundle": // Apache Felix, Knopflerfish
+            case "bundleentry": // Equinox
+            case "bundleresource": // Equinox
+              return unpackFromBundleURL(url);
+            default:
+              throw new IllegalStateException("Invalid url protocol: " + prot);
+          }
         }
       }
     }
@@ -140,7 +155,7 @@ public class FileResolver {
     if (!isDirectory) {
       cacheFile.getParentFile().mkdirs();
       try {
-        if (ENABLE_CACHING) {
+        if (enableCaching) {
           Files.copy(resource.toPath(), cacheFile.toPath());
         } else {
           Files.copy(resource.toPath(), cacheFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
@@ -182,19 +197,27 @@ public class FileResolver {
         zip = new ZipFile(file);
       }
 
+      String inJarPath = path.substring(idx1 + 6);
+      String[] parts = JAR_URL_SEP_PATTERN.split(inJarPath);
+      StringBuilder prefixBuilder = new StringBuilder();
+      for (int i = 0; i < parts.length - 1; i++) {
+        prefixBuilder.append(parts[i]).append("/");
+      }
+      String prefix = prefixBuilder.toString();
+
       Enumeration<? extends ZipEntry> entries = zip.entries();
       while (entries.hasMoreElements()) {
         ZipEntry entry = entries.nextElement();
         String name = entry.getName();
-        if (name.startsWith(fileName)) {
-          File file = new File(cacheDir, name);
+        if (name.startsWith(prefix.isEmpty() ? fileName : prefix + fileName)) {
+          File file = new File(cacheDir, prefix.isEmpty() ? name : name.substring(prefix.length()));
           if (name.endsWith("/")) {
             // Directory
             file.mkdirs();
           } else {
             file.getParentFile().mkdirs();
             try (InputStream is = zip.getInputStream(entry)) {
-              if (ENABLE_CACHING) {
+              if (enableCaching) {
                 Files.copy(is, file.toPath());
               } else {
                 Files.copy(is, file.toPath(), StandardCopyOption.REPLACE_EXISTING);
@@ -241,7 +264,7 @@ public class FileResolver {
       } else {
         file.getParentFile().mkdirs();
         try (InputStream is = url.openStream()) {
-          if (ENABLE_CACHING) {
+          if (enableCaching) {
             Files.copy(is, file.toPath());
           } else {
             Files.copy(is, file.toPath(), StandardCopyOption.REPLACE_EXISTING);

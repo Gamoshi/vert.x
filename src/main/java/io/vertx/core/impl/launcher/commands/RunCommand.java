@@ -1,25 +1,21 @@
 /*
- *  Copyright (c) 2011-2015 The original author or authors
- *  ------------------------------------------------------
- *  All rights reserved. This program and the accompanying materials
- *  are made available under the terms of the Eclipse Public License v1.0
- *  and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *       The Eclipse Public License is available at
- *       http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *       The Apache License v2.0 is available at
- *       http://www.opensource.org/licenses/apache2.0.php
- *
- *  You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
+
 package io.vertx.core.impl.launcher.commands;
 
-import io.vertx.core.DeploymentOptions;
-import io.vertx.core.Handler;
+import io.vertx.core.*;
 import io.vertx.core.cli.CLIException;
 import io.vertx.core.cli.CommandLine;
 import io.vertx.core.cli.annotations.*;
+import io.vertx.core.impl.VertxInternal;
 import io.vertx.core.impl.launcher.VertxLifecycleHooks;
 import io.vertx.core.json.DecodeException;
 import io.vertx.core.json.JsonObject;
@@ -118,7 +114,14 @@ public class RunCommand extends BareCommand {
   @Description("Specifies configuration that should be provided to the verticle. <config> should reference either a " +
       "text file containing a valid JSON object which represents the configuration OR be a JSON string.")
   public void setConfig(String configuration) {
-    this.config = configuration;
+    if (configuration != null) {
+      // For inlined configuration remove first and end single and double quotes if any
+      this.config = configuration.trim()
+          .replaceAll("^\"|\"$", "")
+          .replaceAll("^'|'$", "");
+    } else {
+      this.config = null;
+    }
   }
 
   /**
@@ -142,6 +145,7 @@ public class RunCommand extends BareCommand {
 
   /**
    * Sets the user command executed during redeployment.
+   *
    * @param command the on redeploy command
    * @deprecated Use 'on-redeploy' instead. It will be removed in vert.x 3.3
    */
@@ -217,11 +221,12 @@ public class RunCommand extends BareCommand {
   }
 
   /**
-   * @return whether the {@code cluster} option or the {@code ha} option are enabled.
+   * @return whether the {@code cluster} option or the {@code ha} option are enabled. Also {@code true} when a custom
+   * launcher modifies the Vert.x options to set `clustered` to {@code true}
    */
   @Override
   public boolean isClustered() {
-    return cluster || ha;
+    return cluster || ha || (options != null  && options.isClustered());
   }
 
   @Override
@@ -236,12 +241,28 @@ public class RunCommand extends BareCommand {
   public void run() {
     if (redeploy == null || redeploy.isEmpty()) {
       JsonObject conf = getConfiguration();
+      if (conf == null) {
+        conf = new JsonObject();
+      }
       afterConfigParsed(conf);
 
-      super.run();
+      super.run(this::afterStoppingVertx);
       if (vertx == null) {
-        return; // Already logged.
+        // Already logged.
+        ExecUtils.exitBecauseOfVertxInitializationIssue();
       }
+
+      if (vertx instanceof VertxInternal) {
+        ((VertxInternal) vertx).addCloseHook(completionHandler -> {
+          try {
+            beforeStoppingVertx(vertx);
+            completionHandler.handle(Future.succeededFuture());
+          } catch (Exception e) {
+            completionHandler.handle(Future.failedFuture(e));
+          }
+        });
+      }
+
       deploymentOptions = new DeploymentOptions();
       configureFromSystemProperties(deploymentOptions, DEPLOYMENT_OPTIONS_PROP_PREFIX);
       deploymentOptions.setConfig(conf).setWorker(worker).setHa(ha).setInstances(instances);
@@ -298,8 +319,7 @@ public class RunCommand extends BareCommand {
    * @param onCompletion an optional on-completion handler. If set it must be invoked at the end of this method.
    */
   protected synchronized void stopBackgroundApplication(Handler<Void> onCompletion) {
-    executionContext.execute("stop", vertxApplicationBackgroundId);
-
+    executionContext.execute("stop", vertxApplicationBackgroundId, "--redeploy");
     if (redeployTerminationPeriod > 0) {
       try {
         Thread.sleep(redeployTerminationPeriod);
@@ -350,7 +370,9 @@ public class RunCommand extends BareCommand {
       args.add("--classpath=" + classpath.stream().collect(Collectors.joining(File.pathSeparator)));
     }
     if (config != null) {
-      args.add("--conf=" + config);
+      // Pass the configuration in 2 steps to quote correctly the configuration if it's an inlined json string
+      args.add("--conf");
+      args.add(config);
     }
     if (instances != 1) {
       args.add("--instances=" + instances);
@@ -383,13 +405,15 @@ public class RunCommand extends BareCommand {
   private void handleDeployFailed(Throwable cause) {
     if (executionContext.main() instanceof VertxLifecycleHooks) {
       ((VertxLifecycleHooks) executionContext.main()).handleDeployFailed(vertx, mainVerticle, deploymentOptions, cause);
+    } else {
+      ExecUtils.exitBecauseOfVertxDeploymentIssue();
     }
   }
 
   protected JsonObject getConfiguration() {
     JsonObject conf;
     if (config != null) {
-      try (Scanner scanner = new Scanner(new File(config)).useDelimiter("\\A")) {
+      try (Scanner scanner = new Scanner(new File(config), "UTF-8").useDelimiter("\\A")) {
         String sconf = scanner.next();
         try {
           conf = new JsonObject(sconf);
@@ -403,6 +427,7 @@ public class RunCommand extends BareCommand {
         } catch (DecodeException e2) {
           // The configuration is not printed for security purpose, it can contain sensitive data.
           log.error("The -conf option does not point to an existing file or is not a valid JSON object");
+          e2.printStackTrace();
           return null;
         }
       }
@@ -423,6 +448,20 @@ public class RunCommand extends BareCommand {
     final Object main = executionContext.main();
     if (main instanceof VertxLifecycleHooks) {
       ((VertxLifecycleHooks) main).afterConfigParsed(config);
+    }
+  }
+
+  protected void beforeStoppingVertx(Vertx vertx) {
+    final Object main = executionContext.main();
+    if (main instanceof VertxLifecycleHooks) {
+      ((VertxLifecycleHooks) main).beforeStoppingVertx(vertx);
+    }
+  }
+
+  protected void afterStoppingVertx() {
+    final Object main = executionContext.main();
+    if (main instanceof VertxLifecycleHooks) {
+      ((VertxLifecycleHooks) main).afterStoppingVertx();
     }
   }
 }

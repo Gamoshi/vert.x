@@ -1,17 +1,12 @@
 /*
- *  Copyright (c) 2011-2015 The original author or authors
- *  ------------------------------------------------------
- *  All rights reserved. This program and the accompanying materials
- *  are made available under the terms of the Eclipse Public License v1.0
- *  and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *       The Eclipse Public License is available at
- *       http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *       The Apache License v2.0 is available at
- *       http://www.opensource.org/licenses/apache2.0.php
- *
- *  You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.core.impl.launcher.commands;
@@ -22,11 +17,8 @@ import io.vertx.core.impl.launcher.CommandLineUtils;
 import io.vertx.core.spi.launcher.DefaultCommand;
 
 import java.io.File;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * A command starting a vert.x application in the background.
@@ -100,11 +92,22 @@ public class StartCommand extends DefaultCommand {
     ProcessBuilder builder = new ProcessBuilder();
     addJavaCommand(cmd);
 
+    // Must be called only once !
+    List<String> cliArguments = getArguments();
+
     // Add the classpath to env.
     builder.environment().put("CLASSPATH", System.getProperty("java.class.path"));
 
     if (launcher != null) {
       ExecUtils.addArgument(cmd, launcher);
+      // Do we have a valid command ?
+      Optional<String> maybeCommand = cliArguments.stream()
+          .filter(arg -> executionContext.launcher().getCommandNames().contains(arg))
+          .findFirst();
+      if (! maybeCommand.isPresent()) {
+        // No command, add `run`
+        ExecUtils.addArgument(cmd, "run");
+      }
     } else if (isLaunchedAsFatJar()) {
       ExecUtils.addArgument(cmd, "-jar");
       ExecUtils.addArgument(cmd, CommandLineUtils.getJar());
@@ -114,7 +117,7 @@ public class StartCommand extends DefaultCommand {
       ExecUtils.addArgument(cmd, "run");
     }
 
-    getArguments().stream().forEach(arg -> ExecUtils.addArgument(cmd, arg));
+    cliArguments.forEach(arg -> ExecUtils.addArgument(cmd, arg));
 
     try {
       builder.command(cmd);
@@ -124,9 +127,10 @@ public class StartCommand extends DefaultCommand {
       }
       builder.start();
       out.println(id);
-    } catch (IOException e) {
+    } catch (Exception e) {
       out.println("Cannot create vert.x application process");
       e.printStackTrace(out);
+      ExecUtils.exitBecauseOfProcessIssue();
     }
 
   }
@@ -162,8 +166,8 @@ public class StartCommand extends DefaultCommand {
     }
 
     if (!java.isFile()) {
-      throw new IllegalStateException("Cannot find java executable - " + java.getAbsolutePath()
-          + " does not exist");
+      out.println("Cannot find java executable - " + java.getAbsolutePath() + " does not exist");
+      ExecUtils.exitBecauseOfSystemConfigurationIssue();
     }
     return java;
   }

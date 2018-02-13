@@ -1,31 +1,34 @@
 /*
- * Copyright (c) 2011-2014 The original author or authors
- * ------------------------------------------------------
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *     The Eclipse Public License is available at
- *     http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *     The Apache License v2.0 is available at
- *     http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.test.core;
 
 import io.vertx.core.Vertx;
+import io.vertx.core.VertxOptions;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClientOptions;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.impl.FileResolver;
 import io.vertx.core.impl.VertxInternal;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
 import java.util.concurrent.CountDownLatch;
 
 /**
@@ -87,14 +90,17 @@ public abstract class FileResolverTestBase extends VertxTestBase {
 
   @Test
   public void testResolveFileFromClasspathDisableCaching() throws Exception {
-    System.setProperty(FileResolver.DISABLE_FILE_CACHING_PROP_NAME, "true");
-    resolver = new FileResolver(vertx);
-    for (int i = 0; i < 2; i++) {
-      File file = resolver.resolveFile("afile.html");
-      assertTrue(file.exists());
-      assertTrue(file.getPath().startsWith(".vertx" + File.separator + "file-cache-"));
-      assertFalse(file.isDirectory());
-      assertEquals("<html><body>afile</body></html>", readFile(file));
+    VertxInternal vertx = (VertxInternal) Vertx.vertx(new VertxOptions().setFileResolverCachingEnabled(false));
+    try {
+      for (int i = 0; i < 2; i++) {
+        File file = vertx.resolveFile("afile.html");
+        assertTrue(file.exists());
+        assertTrue(file.getPath().startsWith(".vertx" + File.separator + "file-cache-"));
+        assertFalse(file.isDirectory());
+        assertEquals("<html><body>afile</body></html>", readFile(file));
+      }
+    } finally {
+      vertx.close();
     }
   }
 
@@ -171,7 +177,7 @@ public abstract class FileResolverTestBase extends VertxTestBase {
 
   @Test
   public void testDeleteCacheDir() throws Exception {
-    Vertx vertx2 = Vertx.vertx();
+    Vertx vertx2 = vertx();
     FileResolver resolver2 = new FileResolver(vertx2);
     File file = resolver2.resolveFile(webRoot + "/somefile.html");
     assertTrue(file.exists());
@@ -188,7 +194,7 @@ public abstract class FileResolverTestBase extends VertxTestBase {
 
   @Test
   public void testCacheDirDeletedOnVertxClose() {
-    VertxInternal vertx2 = (VertxInternal)Vertx.vertx();
+    VertxInternal vertx2 = (VertxInternal)vertx();
     File file = vertx2.resolveFile(webRoot + "/somefile.html");
     assertTrue(file.exists());
     File cacheDir = file.getParentFile().getParentFile();
@@ -228,6 +234,85 @@ public abstract class FileResolverTestBase extends VertxTestBase {
       }).end();
     }));
     await();
+  }
+
+  @Test
+  public void testResolveFileFromDifferentThreads() throws Exception {
+    int size = 10 * 1024 * 1024;
+    byte[] content = new byte[size];
+    new Random().nextBytes(content);
+
+    File out = new File("target/test-classes/temp");
+    if (out.exists()) {
+      Files.delete(out.toPath());
+    }
+    Files.write(out.toPath(), content, StandardOpenOption.CREATE_NEW);
+
+    int count = 100;
+    CountDownLatch latch = new CountDownLatch(count);
+    CountDownLatch start = new CountDownLatch(1);
+    List<Exception> errors = new ArrayList<>();
+    for (int i = 0; i < count; i++) {
+        Runnable runnable = () -> {
+        try {
+          start.await();
+          File file = resolver.resolveFile("temp");
+          byte[] data = Files.readAllBytes(file.toPath());
+          Assert.assertArrayEquals(content, data);
+        } catch (Exception e) {
+          errors.add(e);
+        } finally {
+          latch.countDown();
+        }
+      };
+
+      new Thread(runnable).start();
+    }
+
+    start.countDown();
+    latch.await();
+    assertTrue(errors.isEmpty());
+  }
+
+  @Test
+  public void testEnableCaching() throws Exception {
+    testCaching(true);
+  }
+
+  @Test
+  public void testDisableCaching() throws Exception {
+    testCaching(false);
+  }
+
+  private void testCaching(boolean enabled) throws Exception {
+    VertxInternal vertx = (VertxInternal) Vertx.vertx(new VertxOptions().setFileResolverCachingEnabled(enabled));
+    File tmp = File.createTempFile("vertx", ".bin");
+    tmp.deleteOnExit();
+    URL url = tmp.toURI().toURL();
+    Files.write(tmp.toPath(), "foo".getBytes());
+    ClassLoader old = Thread.currentThread().getContextClassLoader();
+    try {
+      Thread.currentThread().setContextClassLoader(new ClassLoader() {
+        @Override
+        public URL getResource(String name) {
+          if ("foo".equals(name)) {
+            return url;
+          }
+          return super.getResource(name);
+        }
+      });
+      File f = vertx.resolveFile("foo");
+      assertEquals("foo", new String(Files.readAllBytes(f.toPath())));
+      Files.write(tmp.toPath(), "bar".getBytes());
+      f = vertx.resolveFile("foo");
+      if (enabled) {
+        assertEquals("foo", new String(Files.readAllBytes(f.toPath())));
+      } else {
+        assertEquals("bar", new String(Files.readAllBytes(f.toPath())));
+      }
+    } finally {
+      Thread.currentThread().setContextClassLoader(old);
+    }
   }
 
   private String readFile(File file) {

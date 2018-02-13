@@ -1,17 +1,12 @@
 /*
- * Copyright (c) 2011-2014 The original author or authors
- * ------------------------------------------------------
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *     The Eclipse Public License is available at
- *     http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *     The Apache License v2.0 is available at
- *     http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.test.core;
@@ -1147,6 +1142,47 @@ public class JsonObjectTest {
   }
 
   @Test
+  public void testMergeInDepth0() {
+    JsonObject obj1 = new JsonObject("{ \"foo\": { \"bar\": \"flurb\" }}");
+    JsonObject obj2 = new JsonObject("{ \"foo\": { \"bar\": \"eek\" }}");
+    obj1.mergeIn(obj2, 0);
+    assertEquals(1, obj1.size());
+    assertEquals(1, obj1.getJsonObject("foo").size());
+    assertEquals("flurb", obj1.getJsonObject("foo").getString("bar"));
+  }
+
+  @Test
+  public void testMergeInFlat() {
+    JsonObject obj1 = new JsonObject("{ \"foo\": { \"bar\": \"flurb\", \"eek\": 32 }}");
+    JsonObject obj2 = new JsonObject("{ \"foo\": { \"bar\": \"eek\" }}");
+    obj1.mergeIn(obj2, false);
+    assertEquals(1, obj1.size());
+    assertEquals(1, obj1.getJsonObject("foo").size());
+    assertEquals("eek", obj1.getJsonObject("foo").getString("bar"));
+  }
+
+  @Test
+  public void testMergeInDepth1() {
+    JsonObject obj1 = new JsonObject("{ \"foo\": \"bar\", \"flurb\": { \"eek\": \"foo\", \"bar\": \"flurb\"}}");
+    JsonObject obj2 = new JsonObject("{ \"flurb\": { \"bar\": \"flurb1\" }}");
+    obj1.mergeIn(obj2, 1);
+    assertEquals(2, obj1.size());
+    assertEquals(1, obj1.getJsonObject("flurb").size());
+    assertEquals("flurb1", obj1.getJsonObject("flurb").getString("bar"));
+  }
+
+  @Test
+  public void testMergeInDepth2() {
+    JsonObject obj1 = new JsonObject("{ \"foo\": \"bar\", \"flurb\": { \"eek\": \"foo\", \"bar\": \"flurb\"}}");
+    JsonObject obj2 = new JsonObject("{ \"flurb\": { \"bar\": \"flurb1\" }}");
+    obj1.mergeIn(obj2, 2);
+    assertEquals(2, obj1.size());
+    assertEquals(2, obj1.getJsonObject("flurb").size());
+    assertEquals("foo", obj1.getJsonObject("flurb").getString("eek"));
+    assertEquals("flurb1", obj1.getJsonObject("flurb").getString("bar"));
+  }
+
+  @Test
   public void testEncode() throws Exception {
     jsonObject.put("mystr", "foo");
     jsonObject.put("mycharsequence", new StringBuilder("oob"));
@@ -1167,6 +1203,31 @@ public class JsonObjectTest {
       "myboolean\":true,\"mybinary\":\"" + strBytes + "\",\"myinstant\":\"" + ISO_INSTANT.format(now) + "\",\"mynull\":null,\"myobj\":{\"foo\":\"bar\"},\"myarr\":[\"foo\",123]}";
     String json = jsonObject.encode();
     assertEquals(expected, json);
+  }
+
+  @Test
+  public void testEncodeToBuffer() throws Exception {
+    jsonObject.put("mystr", "foo");
+    jsonObject.put("mycharsequence", new StringBuilder("oob"));
+    jsonObject.put("myint", 123);
+    jsonObject.put("mylong", 1234l);
+    jsonObject.put("myfloat", 1.23f);
+    jsonObject.put("mydouble", 2.34d);
+    jsonObject.put("myboolean", true);
+    byte[] bytes = TestUtils.randomByteArray(10);
+    jsonObject.put("mybinary", bytes);
+    Instant now = Instant.now();
+    jsonObject.put("myinstant", now);
+    jsonObject.putNull("mynull");
+    jsonObject.put("myobj", new JsonObject().put("foo", "bar"));
+    jsonObject.put("myarr", new JsonArray().add("foo").add(123));
+    String strBytes = Base64.getEncoder().encodeToString(bytes);
+
+    Buffer expected = Buffer.buffer("{\"mystr\":\"foo\",\"mycharsequence\":\"oob\",\"myint\":123,\"mylong\":1234,\"myfloat\":1.23,\"mydouble\":2.34,\"" +
+      "myboolean\":true,\"mybinary\":\"" + strBytes + "\",\"myinstant\":\"" + ISO_INSTANT.format(now) + "\",\"mynull\":null,\"myobj\":{\"foo\":\"bar\"},\"myarr\":[\"foo\",123]}", "UTF-8");
+
+    Buffer json = jsonObject.toBuffer();
+    assertArrayEquals(expected.getBytes(), json.getBytes());
   }
 
   @Test
@@ -1469,6 +1530,15 @@ public class JsonObjectTest {
   }
 
   @Test
+  public void testCreateFromBuffer() {
+    JsonObject excepted = new JsonObject();
+    excepted.put("foo", "bar");
+    excepted.put("quux", 123);
+    Buffer buf = Buffer.buffer(excepted.encode());
+    assertEquals(excepted, new JsonObject(buf));
+  }
+
+  @Test
   public void testCreateFromMapCharSequence() {
     Map<String, Object> map = new HashMap<>();
     map.put("foo", "bar");
@@ -1622,11 +1692,77 @@ public class JsonObjectTest {
   }
 
   @Test
+  public void testPutInstantAsObject() {
+    Object instant = Instant.now();
+    JsonObject jsonObject = new JsonObject();
+    jsonObject.put("instant", instant);
+    // assert data is stored as String
+    assertTrue(jsonObject.getValue("instant") instanceof String);
+  }
+
+  @Test
   public void testStreamCorrectTypes() throws Exception {
     String json = "{\"object1\": {\"object2\": 12}}";
     JsonObject object = new JsonObject(json);
     testStreamCorrectTypes(object.copy());
     testStreamCorrectTypes(object);
+  }
+
+  @Test
+  public void testRemoveMethodReturnedObject() {
+    JsonObject obj = new JsonObject();
+    obj.put("simple", "bar")
+        .put("object", new JsonObject().put("name", "vert.x").put("count", 2))
+        .put("array", new JsonArray().add(1.0).add(2.0));
+
+    Object removed = obj.remove("missing");
+    assertNull(removed);
+
+    removed = obj.remove("simple");
+    assertTrue(removed instanceof String);
+
+    removed = obj.remove("object");
+    assertTrue(removed instanceof JsonObject);
+    assertEquals(((JsonObject) removed).getString("name"), "vert.x");
+
+    removed = obj.remove("array");
+    assertTrue(removed instanceof JsonArray);
+    assertEquals(((JsonArray) removed).getDouble(0), 1.0, 0.0);
+  }
+
+  @Test
+  public void testOrder() {
+    List<String> expectedKeys = new ArrayList<>();
+    int size = 100;
+    StringBuilder sb = new StringBuilder("{");
+    for (int i = 0;i < size;i++) {
+      sb.append("\"key-").append(i).append("\":").append(i).append(",");
+      expectedKeys.add("key-" + i);
+    }
+    sb.setCharAt(sb.length() - 1, '}');
+    JsonObject obj = new JsonObject(sb.toString());
+    List<String> keys = new ArrayList<>();
+
+    // ordered because of Jackson uses a LinkedHashMap
+    obj.forEach(e -> keys.add(e.getKey()));
+    assertEquals(expectedKeys, keys);
+    keys.clear();
+
+    // Ordered because we preserve the LinkedHashMap
+    obj.copy().forEach(e -> keys.add(e.getKey()));
+    assertEquals(expectedKeys, keys);
+  }
+
+  @Test
+  public void testMergeInNullValue() {
+    JsonObject obj = new JsonObject();
+    obj.put("key", "value");
+
+    JsonObject otherObj = new JsonObject();
+    otherObj.putNull("key");
+
+    obj.mergeIn(otherObj, true);
+    assertNull(obj.getString("key", "other"));
   }
 
   private void testStreamCorrectTypes(JsonObject object) {

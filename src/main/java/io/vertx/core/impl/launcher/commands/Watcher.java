@@ -1,17 +1,12 @@
 /*
- *  Copyright (c) 2011-2013 The original author or authors
- *  ------------------------------------------------------
- *  All rights reserved. This program and the accompanying materials
- *  are made available under the terms of the Eclipse Public License v1.0
- *  and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *       The Eclipse Public License is available at
- *       http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *       The Apache License v2.0 is available at
- *       http://www.opensource.org/licenses/apache2.0.php
- *
- *  You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.core.impl.launcher.commands;
@@ -23,6 +18,7 @@ import io.vertx.core.logging.LoggerFactory;
 import java.io.File;
 import java.nio.file.WatchService;
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * A file alteration monitor based on a home made file system scan and watching files matching a set of includes
@@ -41,9 +37,11 @@ public class Watcher implements Runnable {
   private final static Logger LOGGER = LoggerFactory.getLogger(Watcher.class);
 
   private final long gracePeriod;
-  private final Map<File, Map<File, FileInfo>> fileMap = new HashMap<>();
+  private final Map<File, Map<File, FileInfo>> fileMap = new LinkedHashMap<>();
   private final Set<File> filesToWatch = new HashSet<>();
   private final long scanPeriod;
+  private final List<File> roots;
+  private final File cwd;
 
   /**
    * This field is always access from the scan thread. No need to be volatile.
@@ -51,7 +49,6 @@ public class Watcher implements Runnable {
   private long lastChange = -1;
 
   private final List<String> includes;
-  private final File root;
   private final Handler<Handler<Void>> deploy;
   private final Handler<Handler<Void>> undeploy;
   private final String cmd;
@@ -73,16 +70,48 @@ public class Watcher implements Runnable {
   public Watcher(File root, List<String> includes, Handler<Handler<Void>> deploy, Handler<Handler<Void>> undeploy,
                  String onRedeployCommand, long gracePeriod, long scanPeriod) {
     this.gracePeriod = gracePeriod;
-    this.root = root;
-    this.includes = includes;
+    this.includes = sanitizeIncludePatterns(includes);
+    this.roots = extractRoots(root, this.includes);
+    this.cwd = root;
+    LOGGER.info("Watched paths: " + this.roots);
     this.deploy = deploy;
     this.undeploy = undeploy;
     this.cmd = onRedeployCommand;
     this.scanPeriod = scanPeriod;
-    addFileToWatch(root);
+    addFilesToWatchedList(roots);
   }
 
-  private void addFileToWatch(File file) {
+  static List<File> extractRoots(File root, List<String> includes) {
+    return includes.stream().map(s -> {
+      if (s.startsWith("*")) {
+        return root.getAbsolutePath();
+      }
+      if (s.contains("*")) {
+        s = s.substring(0, s.indexOf("*"));
+      }
+      File file = new File(s);
+      if (file.isAbsolute()) {
+        return file.getAbsolutePath();
+      } else {
+        return new File(root, s).getAbsolutePath();
+      }
+    }).collect(Collectors.toSet()).stream().map(File::new).collect(Collectors.toList());
+  }
+
+  private List<String> sanitizeIncludePatterns(List<String> includes) {
+    return includes.stream().map(p -> {
+      if (ExecUtils.isWindows()) {
+        return p.replace('/', File.separatorChar);
+      }
+      return p.replace('\\', File.separatorChar);
+    }).collect(Collectors.toList());
+  }
+
+  private void addFilesToWatchedList(List<File> roots) {
+    roots.forEach(this::addFileToWatchedList);
+  }
+
+  private void addFileToWatchedList(File file) {
     filesToWatch.add(file);
     Map<File, FileInfo> map = new HashMap<>();
     if (file.isDirectory()) {
@@ -92,7 +121,7 @@ public class Watcher implements Runnable {
         for (File child : children) {
           map.put(child, new FileInfo(child.lastModified(), child.length()));
           if (child.isDirectory()) {
-            addFileToWatch(child);
+            addFileToWatchedList(child);
           }
         }
       }
@@ -103,13 +132,19 @@ public class Watcher implements Runnable {
     fileMap.put(file, map);
   }
 
+  /**
+   * Checks whether or not a change has occurred in one of the watched file that match one of the given include pattern
+   * . Are detected: new files, modified file and deleted files. File modification is detected using
+   * {@link File#lastModified()}, so the behavior depends on the file system precision.
+   *
+   * @return {@code true} if a change occurred requiring the redeployment.
+   */
   private boolean changesHaveOccurred() {
-
     boolean changed = false;
     for (File toWatch : new HashSet<>(filesToWatch)) {
 
       // The new files in the directory
-      Map<File, File> newFiles = new HashMap<>();
+      Map<File, File> newFiles = new LinkedHashMap<>();
       if (toWatch.isDirectory()) {
         File[] files = toWatch.exists() ? toWatch.listFiles() : new File[]{};
 
@@ -158,7 +193,7 @@ public class Watcher implements Runnable {
           // Add new file
           currentFileMap.put(newFile, new FileInfo(newFile.lastModified(), newFile.length()));
           if (newFile.isDirectory()) {
-            addFileToWatch(newFile);
+            addFileToWatchedList(newFile);
           }
           LOGGER.trace("File was added: " + newFile);
           if (match(newFile)) {
@@ -190,12 +225,33 @@ public class Watcher implements Runnable {
    */
   protected boolean match(File file) {
     // Compute relative path.
-    if (!file.getAbsolutePath().startsWith(root.getAbsolutePath())) {
+    String rel = null;
+    String relFromCwd = null;
+    for (File root : roots) {
+      if (file.getAbsolutePath().startsWith(root.getAbsolutePath())) {
+        if (file.getAbsolutePath().equals(root.getAbsolutePath())) {
+          rel = file.getAbsolutePath();
+        } else {
+          rel = file.getAbsolutePath().substring(root.getAbsolutePath().length() + 1);
+        }
+      }
+    }
+    if (rel == null) {
+      LOGGER.warn("A change in " + file.getAbsolutePath() + " has been detected, but the file does not belong to a " +
+          "watched roots: " + roots);
       return false;
     }
-    String rel = file.getAbsolutePath().substring(root.getAbsolutePath().length() + 1);
+
+    if (file.getAbsolutePath().startsWith(cwd.getAbsolutePath())) {
+      relFromCwd = file.getAbsolutePath().substring(cwd.getAbsolutePath().length() + 1);
+    }
+
     for (String include : includes) {
-      if (FileSelector.matchPath(include, rel)) {
+      // Windows files are not case sensitive
+      // 3 checks: two for the relative file (root and cwd), and one taking the absolute path, for pattern using
+      // absolute path
+      if ((relFromCwd != null && FileSelector.matchPath(include, relFromCwd, !ExecUtils.isWindows()))
+          || FileSelector.matchPath(include, file.getAbsolutePath(), !ExecUtils.isWindows())) {
         return true;
       }
     }
@@ -249,13 +305,17 @@ public class Watcher implements Runnable {
    * Redeployment process.
    */
   private void trigger() {
+    long begin = System.currentTimeMillis();
     LOGGER.info("Redeploying!");
     // 1)
     undeploy.handle(v1 -> {
       // 2)
       executeUserCommand(v2 -> {
         // 3)
-        deploy.handle(v3 -> LOGGER.info("Redeployment done"));
+        deploy.handle(v3 -> {
+          long end = System.currentTimeMillis();
+          LOGGER.info("Redeployment done in " + (end - begin) + " ms.");
+        });
       });
     });
   }
@@ -265,23 +325,24 @@ public class Watcher implements Runnable {
       try {
         List<String> command = new ArrayList<>();
         if (ExecUtils.isWindows()) {
-          ExecUtils.addArgument(command, cmd);
+          ExecUtils.addArgument(command, "cmd");
+          ExecUtils.addArgument(command, "/c");
         } else {
           ExecUtils.addArgument(command, "sh");
           ExecUtils.addArgument(command, "-c");
-          // Do not add quote to the given command:
-          command.add(cmd);
         }
+        // Do not add quote to the given command:
+        command.add(cmd);
 
         final Process process = new ProcessBuilder(command)
             .redirectError(ProcessBuilder.Redirect.INHERIT)
             .redirectOutput(ProcessBuilder.Redirect.INHERIT)
             .start();
 
-        process.waitFor();
+        int status = process.waitFor();
+        LOGGER.info("User command terminated with status " + status);
       } catch (Throwable e) {
-        System.err.println("Error while executing the on-redeploy command : '" + cmd + "'");
-        e.printStackTrace();
+        LOGGER.error("Error while executing the on-redeploy command : '" + cmd + "'", e);
       }
     }
     onCompletion.handle(null);

@@ -1,17 +1,12 @@
 /*
- * Copyright (c) 2011-2013 The original author or authors
- *  ------------------------------------------------------
- *  All rights reserved. This program and the accompanying materials
- *  are made available under the terms of the Eclipse Public License v1.0
- *  and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *      The Eclipse Public License is available at
- *      http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *      The Apache License v2.0 is available at
- *      http://www.opensource.org/licenses/apache2.0.php
- *
- *  You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.test.core;
@@ -25,6 +20,8 @@ import org.junit.Test;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import static org.junit.Assert.*;
@@ -89,6 +86,19 @@ public class Http2HeadersTest {
     map.set("bar", "bar_value");
     map.remove((CharSequence) "Bar");
     assertHeaderNames();
+  }
+
+  @Test
+  public void testEntries() {
+    map.set("foo", Arrays.<String>asList("foo_value_1", "foo_value_2"));
+    List<Map.Entry<String, String>> entries = map.entries();
+    assertEquals(entries.size(), 1);
+    assertEquals("foo", entries.get(0).getKey());
+    assertEquals("foo_value_1", entries.get(0).getValue());
+    map.set("bar", "bar_value");
+    Map<String, String> collected = map.entries().stream().collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    assertEquals("foo_value_1", collected.get("foo"));
+    assertEquals("bar_value", collected.get("bar"));
   }
 
   private void assertHeaderNames(String... expected) {

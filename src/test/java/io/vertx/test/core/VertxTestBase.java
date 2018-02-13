@@ -1,40 +1,36 @@
 /*
- * Copyright (c) 2011-2014 The original author or authors
- * ------------------------------------------------------
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *     The Eclipse Public License is available at
- *     http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *     The Apache License v2.0 is available at
- *     http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.test.core;
 
 import io.vertx.core.AbstractVerticle;
+import io.vertx.core.AsyncResult;
 import io.vertx.core.Context;
 import io.vertx.core.DeploymentOptions;
+import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.VertxOptions;
 import io.vertx.core.logging.Logger;
 import io.vertx.core.logging.LoggerFactory;
-import io.vertx.core.net.PemTrustOptions;
 import io.vertx.core.net.JksOptions;
 import io.vertx.core.net.PemKeyCertOptions;
 import io.vertx.core.net.KeyCertOptions;
 import io.vertx.core.net.PfxOptions;
 import io.vertx.core.net.TCPSSLOptions;
-import io.vertx.core.net.TrustOptions;
 import io.vertx.core.spi.cluster.ClusterManager;
 import io.vertx.test.fakecluster.FakeClusterManager;
 import org.junit.Rule;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -45,6 +41,8 @@ import java.util.concurrent.TimeUnit;
  */
 public class VertxTestBase extends AsyncTestBase {
 
+  public static final boolean USE_NATIVE_TRANSPORT = Boolean.getBoolean("vertx.useNativeTransport");
+  public static final boolean USE_DOMAIN_SOCKETS = Boolean.getBoolean("vertx.useDomainSockets");
   private static final Logger log = LoggerFactory.getLogger(VertxTestBase.class);
 
   @Rule
@@ -54,51 +52,88 @@ public class VertxTestBase extends AsyncTestBase {
 
   protected Vertx[] vertices;
 
+  private List<Vertx> created;
+
   protected void vinit() {
     vertx = null;
     vertices = null;
+    created = null;
   }
 
   public void setUp() throws Exception {
     super.setUp();
     vinit();
-    vertx = Vertx.vertx(getOptions());
+    VertxOptions options = getOptions();
+    boolean nativeTransport = options.getPreferNativeTransport();
+    vertx = Vertx.vertx(options);
+    if (nativeTransport) {
+      assertTrue(vertx.isNativeTransportEnabled());
+    }
   }
 
   protected VertxOptions getOptions() {
-    return new VertxOptions();
+    VertxOptions options = new VertxOptions();
+    options.setPreferNativeTransport(USE_NATIVE_TRANSPORT);
+    return options;
   }
 
   protected void tearDown() throws Exception {
     if (vertx != null) {
-      CountDownLatch latch = new CountDownLatch(1);
-      vertx.close(ar -> {
-        latch.countDown();
-      });
-      awaitLatch(latch);
+      close(vertx);
     }
-    if (vertices != null) {
-      int numVertices = 0;
-      for (int i = 0; i < vertices.length; i++) {
-        if (vertices[i] != null) {
-          numVertices++;
-        }
-      }
-      CountDownLatch latch = new CountDownLatch(numVertices);
-      for (Vertx vertx: vertices) {
-        if (vertx != null) {
-          vertx.close(ar -> {
-            if (ar.failed()) {
-              log.error("Failed to shutdown vert.x", ar.cause());
-            }
-            latch.countDown();
-          });
-        }
+    if (created != null) {
+      CountDownLatch latch = new CountDownLatch(created.size());
+      for (Vertx v : created) {
+        v.close(ar -> {
+          if (ar.failed()) {
+            log.error("Failed to shutdown vert.x", ar.cause());
+          }
+          latch.countDown();
+        });
       }
       assertTrue(latch.await(180, TimeUnit.SECONDS));
     }
     FakeClusterManager.reset(); // Bit ugly
     super.tearDown();
+  }
+
+  /**
+   * @return create a blank new Vert.x instance with no options closed when tear down executes.
+   */
+  protected Vertx vertx() {
+    if (created == null) {
+      created = new ArrayList<>();
+    }
+    Vertx vertx = Vertx.vertx();
+    created.add(vertx);
+    return vertx;
+  }
+
+  /**
+   * @return create a blank new Vert.x instance with @{@code options} closed when tear down executes.
+   */
+  protected Vertx vertx(VertxOptions options) {
+    if (created == null) {
+      created = new ArrayList<>();
+    }
+    Vertx vertx = Vertx.vertx(options);
+    created.add(vertx);
+    return vertx;
+  }
+
+  /**
+   * Create a blank new clustered Vert.x instance with @{@code options} closed when tear down executes.
+   */
+  protected void clusteredVertx(VertxOptions options, Handler<AsyncResult<Vertx>> ar) {
+    if (created == null) {
+      created = Collections.synchronizedList(new ArrayList<>());
+    }
+    Vertx.clusteredVertx(options, event -> {
+      if (event.succeeded()) {
+        created.add(event.result());
+      }
+      ar.handle(event);
+    });
   }
 
   protected ClusterManager getClusterManager() {
@@ -114,14 +149,18 @@ public class VertxTestBase extends AsyncTestBase {
     vertices = new Vertx[numNodes];
     for (int i = 0; i < numNodes; i++) {
       int index = i;
-      Vertx.clusteredVertx(options.setClusterHost("localhost").setClusterPort(0).setClustered(true)
+      clusteredVertx(options.setClusterHost("localhost").setClusterPort(0).setClustered(true)
         .setClusterManager(getClusterManager()), ar -> {
-        if (ar.failed()) {
-          ar.cause().printStackTrace();
-        }
-        assertTrue("Failed to start node", ar.succeeded());
-        vertices[index] = ar.result();
-        latch.countDown();
+          try {
+            if (ar.failed()) {
+              ar.cause().printStackTrace();
+            }
+            assertTrue("Failed to start node", ar.succeeded());
+            vertices[index] = ar.result();
+          }
+          finally {
+            latch.countDown();
+          }
       });
     }
     try {
@@ -139,16 +178,6 @@ public class VertxTestBase extends AsyncTestBase {
       sslOptions.setPfxKeyCertOptions((PfxOptions) options);
     } else {
       sslOptions.setPemKeyCertOptions((PemKeyCertOptions) options);
-    }
-  }
-
-  protected static void setOptions(TCPSSLOptions sslOptions, TrustOptions options) {
-    if (options instanceof JksOptions) {
-      sslOptions.setTrustStoreOptions((JksOptions) options);
-    } else if (options instanceof PfxOptions) {
-      sslOptions.setPfxTrustOptions((PfxOptions) options);
-    } else {
-      sslOptions.setPemTrustOptions((PemTrustOptions) options);
     }
   }
 

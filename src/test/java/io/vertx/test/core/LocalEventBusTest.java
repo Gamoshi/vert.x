@@ -1,17 +1,12 @@
 /*
- * Copyright 2014 Red Hat, Inc.
+ * Copyright (c) 2014 Red Hat, Inc. and others
  *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- * The Eclipse Public License is available at
- * http://www.eclipse.org/legal/epl-v10.html
- *
- * The Apache License v2.0 is available at
- * http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.test.core;
@@ -45,12 +40,12 @@ import static io.vertx.test.core.TestUtils.*;
  */
 public class LocalEventBusTest extends EventBusTestBase {
 
-  private Vertx vertx;
   private EventBus eb;
   private boolean running;
 
   public void setUp() throws Exception {
     super.setUp();
+    vertx.close();
     vertx = Vertx.vertx();
     eb = vertx.eventBus();
     running = true;
@@ -130,6 +125,29 @@ public class LocalEventBusTest extends EventBusTestBase {
     reg.unregister();
     reg.unregister(); // Ok to unregister twice
     testComplete();
+  }
+
+  @Test
+  public void testMessageConsumerCloseHookIsClosedCorrectly() {
+    Vertx vertx = Vertx.vertx();
+    EventBus eb = vertx.eventBus();
+    vertx.deployVerticle(new AbstractVerticle() {
+      MessageConsumer consumer;
+      @Override
+      public void start() throws Exception {
+        context.exceptionHandler(err -> {
+          fail("Unexpected exception");
+        });
+        consumer = eb.<String>consumer(ADDRESS1).handler(msg -> {});
+      }
+    }, onSuccess(deploymentID -> {
+      vertx.undeploy(deploymentID, onSuccess(v -> {
+        vertx.setTimer(10, id -> {
+          testComplete();
+        });
+      }));
+    }));
+    await();
   }
 
   @Test
@@ -721,7 +739,7 @@ public class LocalEventBusTest extends EventBusTestBase {
     awaitLatch(latch);
     assertEquals(2, contexts.size());
   }
-  
+
   @Test
   public void testContextsPublish() throws Exception {
     Set<ContextImpl> contexts = new ConcurrentHashSet<>();
@@ -907,11 +925,24 @@ public class LocalEventBusTest extends EventBusTestBase {
     assertNullPointerException(() -> vertx.eventBus().registerDefaultCodec(String.class, new NullNameCodec()));
   }
 
+  @Test
+  public void testDefaultCodecReplyExceptionSubclass() throws Exception {
+    MyReplyException myReplyException = new MyReplyException(23, "my exception");
+    vertx.eventBus().registerDefaultCodec(MyReplyException.class, new MyReplyExceptionMessageCodec());
+    eb.<ReplyException>consumer(ADDRESS1, msg -> {
+      assertTrue(msg.body() instanceof MyReplyException);
+      testComplete();
+    });
+    vertx.eventBus().send(ADDRESS1, myReplyException);
+    await();
+  }
+
 
   @Override
   protected <T, R> void testSend(T val, R received, Consumer<T> consumer, DeliveryOptions options) {
     eb.<T>consumer(ADDRESS1).handler((Message<T> msg) -> {
       if (consumer == null) {
+        assertTrue(msg.isSend());
         assertEquals(received, msg.body());
         if (options != null && options.getHeaders() != null) {
           assertNotNull(msg.headers());
@@ -957,6 +988,7 @@ public class LocalEventBusTest extends EventBusTestBase {
     });
     eb.send(ADDRESS1, str, onSuccess((Message<R> reply) -> {
       if (consumer == null) {
+        assertTrue(reply.isSend());
         assertEquals(received, reply.body());
         if (options != null && options.getHeaders() != null) {
           assertNotNull(reply.headers());
@@ -980,6 +1012,7 @@ public class LocalEventBusTest extends EventBusTestBase {
       @Override
       public void handle(Message<T> msg) {
         if (consumer == null) {
+          assertFalse(msg.isSend());
           assertEquals(val, msg.body());
         } else {
           consumer.accept(msg.body());
@@ -1083,13 +1116,8 @@ public class LocalEventBusTest extends EventBusTestBase {
 
   private void testUnregisterationOfRegisteredConsumerCallsEndHandler(MessageConsumer<String> consumer, ReadStream<?> readStream) {
     consumer.handler(msg -> {});
-    consumer.endHandler(v -> {
-      fail();
-    });
+    consumer.endHandler(v -> testComplete());
     consumer.unregister();
-    vertx.runOnContext(d -> {
-      testComplete();
-    });
     await();
   }
 

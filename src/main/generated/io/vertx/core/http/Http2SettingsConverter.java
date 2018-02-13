@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 Red Hat, Inc.
+ * Copyright (c) 2014 Red Hat, Inc. and others
  *
  * Red Hat licenses this file to you under the Apache License, version 2.0
  * (the "License"); you may not use this file except in compliance with the
@@ -24,9 +24,9 @@ import io.vertx.core.json.JsonArray;
  *
  * NOTE: This class has been automatically generated from the {@link io.vertx.core.http.Http2Settings} original class using Vert.x codegen.
  */
-public class Http2SettingsConverter {
+ class Http2SettingsConverter {
 
-  public static void fromJson(JsonObject json, Http2Settings obj) {
+   static void fromJson(JsonObject json, Http2Settings obj) {
     if (json.getValue("headerTableSize") instanceof Number) {
       obj.setHeaderTableSize(((Number)json.getValue("headerTableSize")).longValue());
     }
@@ -40,14 +40,14 @@ public class Http2SettingsConverter {
       obj.setMaxFrameSize(((Number)json.getValue("maxFrameSize")).intValue());
     }
     if (json.getValue("maxHeaderListSize") instanceof Number) {
-      obj.setMaxHeaderListSize(((Number)json.getValue("maxHeaderListSize")).intValue());
+      obj.setMaxHeaderListSize(((Number)json.getValue("maxHeaderListSize")).longValue());
     }
     if (json.getValue("pushEnabled") instanceof Boolean) {
       obj.setPushEnabled((Boolean)json.getValue("pushEnabled"));
     }
   }
 
-  public static void toJson(Http2Settings obj, JsonObject json) {
+   static void toJson(Http2Settings obj, JsonObject json) {
     json.put("headerTableSize", obj.getHeaderTableSize());
     json.put("initialWindowSize", obj.getInitialWindowSize());
     json.put("maxConcurrentStreams", obj.getMaxConcurrentStreams());

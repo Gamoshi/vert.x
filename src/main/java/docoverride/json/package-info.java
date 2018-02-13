@@ -1,17 +1,12 @@
 /*
- * Copyright 2014 Red Hat, Inc.
+ * Copyright (c) 2014 Red Hat, Inc. and others
  *
- *  All rights reserved. This program and the accompanying materials
- *  are made available under the terms of the Eclipse Public License v1.0
- *  and Apache License v2.0 which accompanies this distribution.
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *  The Eclipse Public License is available at
- *  http://www.eclipse.org/legal/epl-v10.html
- *
- *  The Apache License v2.0 is available at
- *  http://www.opensource.org/licenses/apache2.0.php
- *
- *  You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 /**
@@ -41,6 +36,13 @@
  * {@link docoverride.json.Examples#example0_1}
  * ----
  *
+ * You can create a JSON object from a map as follows:
+ *
+ * [source,java]
+ * ----
+ * {@link docoverride.json.Examples#exampleCreateFromMap}
+ * ----
+ *
  * ==== Putting entries into a JSON object
  *
  * Use the {@link io.vertx.core.json.JsonObject#put} methods to put values into the JSON object.
@@ -61,7 +63,28 @@
  * {@link docoverride.json.Examples#example2}
  * ----
  *
- * ==== Encoding the JSON object to a String
+ * ==== Mapping between JSON objects and Java objects
+ *
+ * You can create a JSON object from the fields of a Java object as follows:
+ *
+ * You can instantiate a Java object and populate its fields from a JSON object as follows:
+ *
+ * [source,java]
+ * ----
+ * {@link docoverride.json.Examples#mapToPojo}
+ * ----
+ *
+ * Note that both of the above mapping directions use Jackson's `ObjectMapper#convertValue()` to perform the
+ * mapping. See the Jackson documentation for information on the impact of field and constructor visibility, caveats
+ * on serialization and deserialization across object references, etc.
+ *
+ * However, in the simplest case, both `mapFrom` and `mapTo` should succeed if all fields of the Java class are
+ * public (or have public getters/setters), and if there is a public default constructor (or no defined constructors).
+ *
+ * Referenced objects will be transitively serialized/deserialized to/from nested JSON objects as
+ * long as the object graph is acyclic.
+ *
+ * ==== Encoding a JSON object to a String
  *
  * You use {@link io.vertx.core.json.JsonObject#encode} to encode the object to a String form.
  *
@@ -102,7 +125,7 @@
  * {@link docoverride.json.Examples#example4}
  * ----
  *
- * ==== Encoding the JSON array to a String
+ * ==== Encoding a JSON array to a String
  *
  * You use {@link io.vertx.core.json.JsonArray#encode} to encode the array to a String form.
  *

@@ -1,18 +1,14 @@
 /*
- *  Copyright (c) 2011-2015 The original author or authors
- *  ------------------------------------------------------
- *  All rights reserved. This program and the accompanying materials
- *  are made available under the terms of the Eclipse Public License v1.0
- *  and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *       The Eclipse Public License is available at
- *       http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *       The Apache License v2.0 is available at
- *       http://www.opensource.org/licenses/apache2.0.php
- *
- *  You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
+
 package io.vertx.core;
 
 import io.vertx.core.impl.launcher.VertxCommandLauncher;
@@ -60,14 +56,17 @@ public class Launcher extends VertxCommandLauncher implements VertxLifecycleHook
   }
 
   /**
-   *
    * Hook for sub-classes of {@link Launcher} after the config has been parsed.
+   *
+   * @param config the read config, empty if none are provided.
    */
   public void afterConfigParsed(JsonObject config) {
   }
 
   /**
    * Hook for sub-classes of {@link Launcher} before the vertx instance is started.
+   *
+   * @param options the configured Vert.x options. Modify them to customize the Vert.x instance.
    */
   public void beforeStartingVertx(VertxOptions options) {
 
@@ -75,6 +74,8 @@ public class Launcher extends VertxCommandLauncher implements VertxLifecycleHook
 
   /**
    * Hook for sub-classes of {@link Launcher} after the vertx instance is started.
+   *
+   * @param vertx the created Vert.x instance
    */
   public void afterStartingVertx(Vertx vertx) {
 
@@ -82,14 +83,31 @@ public class Launcher extends VertxCommandLauncher implements VertxLifecycleHook
 
   /**
    * Hook for sub-classes of {@link Launcher} before the verticle is deployed.
+   *
+   * @param deploymentOptions the current deployment options. Modify them to customize the deployment.
    */
   public void beforeDeployingVerticle(DeploymentOptions deploymentOptions) {
+
+  }
+
+  @Override
+  public void beforeStoppingVertx(Vertx vertx) {
+
+  }
+
+  @Override
+  public void afterStoppingVertx() {
 
   }
 
   /**
    * A deployment failure has been encountered. You can override this method to customize the behavior.
    * By default it closes the `vertx` instance.
+   *
+   * @param vertx             the vert.x instance
+   * @param mainVerticle      the verticle
+   * @param deploymentOptions the verticle deployment options
+   * @param cause             the cause of the failure
    */
   public void handleDeployFailed(Vertx vertx, String mainVerticle, DeploymentOptions deploymentOptions, Throwable cause) {
     // Default behaviour is to close Vert.x if the deploy failed

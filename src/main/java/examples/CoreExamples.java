@@ -1,32 +1,30 @@
 /*
- * Copyright 2014 Red Hat, Inc.
+ * Copyright (c) 2014 Red Hat, Inc. and others
  *
- *  All rights reserved. This program and the accompanying materials
- *  are made available under the terms of the Eclipse Public License v1.0
- *  and Apache License v2.0 which accompanies this distribution.
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *  The Eclipse Public License is available at
- *  http://www.eclipse.org/legal/epl-v10.html
- *
- *  The Apache License v2.0 is available at
- *  http://www.opensource.org/licenses/apache2.0.php
- *
- *  You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package examples;
 
 import io.vertx.core.*;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.core.dns.HostnameResolverOptions;
+import io.vertx.core.dns.AddressResolverOptions;
 import io.vertx.core.file.FileSystem;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.logging.Logger;
 import io.vertx.core.logging.LoggerFactory;
+import io.vertx.core.net.NetClient;
 import io.vertx.core.net.NetServer;
+import io.vertx.core.net.SocketAddress;
 
 import java.util.Arrays;
 
@@ -79,6 +77,32 @@ public class CoreExamples {
     });
   }
 
+  public void workerExecutor1(Vertx vertx) {
+    WorkerExecutor executor = vertx.createSharedWorkerExecutor("my-worker-pool");
+    executor.executeBlocking(future -> {
+      // Call some blocking API that takes a significant amount of time to return
+      String result = someAPI.blockingMethod("hello");
+      future.complete(result);
+    }, res -> {
+      System.out.println("The result is: " + res.result());
+    });
+  }
+
+  public void workerExecutor2(WorkerExecutor executor) {
+    executor.close();
+  }
+
+  public void workerExecutor3(Vertx vertx) {
+    //
+    // 10 threads max
+    int poolSize = 10;
+
+    // 2 minutes
+    long maxExecuteTime = 120000;
+
+    WorkerExecutor executor = vertx.createSharedWorkerExecutor("my-worker-pool", poolSize, maxExecuteTime);
+  }
+
   BlockingAPI someAPI = new BlockingAPI();
 
   class BlockingAPI {
@@ -87,7 +111,7 @@ public class CoreExamples {
     }
   }
 
-  public void exampleFuture1(HttpServer httpServer, NetServer netServer) {
+  public void exampleFutureAll1(HttpServer httpServer, NetServer netServer) {
     Future<HttpServer> httpServerFuture = Future.future();
     httpServer.listen(httpServerFuture.completer());
 
@@ -96,16 +120,18 @@ public class CoreExamples {
 
     CompositeFuture.all(httpServerFuture, netServerFuture).setHandler(ar -> {
       if (ar.succeeded()) {
-        // All server started
+        // All servers started
       } else {
         // At least one server failed
       }
     });
   }
 
-  public void exampleFuture2() {
-    Future<String> future1 = Future.future();
-    Future<String> future2 = Future.future();
+  public void exampleFutureAll2(Future future1, Future future2, Future future3) {
+    CompositeFuture.all(Arrays.asList(future1, future2, future3));
+  }
+
+  public void exampleFutureAny1(Future<String> future1, Future<String> future2) {
     CompositeFuture.any(future1, future2).setHandler(ar -> {
       if (ar.succeeded()) {
         // At least one is succeeded
@@ -115,25 +141,43 @@ public class CoreExamples {
     });
   }
 
-  public void exampleFuture3(Vertx vertx, Future<Void> startFuture) {
+  public void exampleFutureAny2(Future f1, Future f2, Future f3) {
+    CompositeFuture.any(Arrays.asList(f1, f2, f3));
+  }
+
+  public void exampleFutureJoin1(Future future1, Future future2, Future future3) {
+    CompositeFuture.join(future1, future2, future3).setHandler(ar -> {
+      if (ar.succeeded()) {
+        // All succeeded
+      } else {
+        // All completed and at least one failed
+      }
+    });
+  }
+
+  public void exampleFutureJoin2(Future future1, Future future2, Future future3) {
+    CompositeFuture.join(Arrays.asList(future1, future2, future3));
+  }
+
+  public void exampleFuture6(Vertx vertx) {
 
     FileSystem fs = vertx.fileSystem();
+    Future<Void> startFuture = Future.future();
 
     Future<Void> fut1 = Future.future();
-
     fs.createFile("/foo", fut1.completer());
-    fut1.compose(v -> {
 
+    fut1.compose(v -> {
+      // When the file is created (fut1), execute this:
       Future<Void> fut2 = Future.future();
       fs.writeFile("/foo", Buffer.buffer(), fut2.completer());
-
-      // Compose fut1 with fut2
       return fut2;
     }).compose(v -> {
-
-      // Compose fut1 with fut2 and fut3
-      fs.move("/foo", "/bar", startFuture.completer());
-    }, startFuture);
+              // When the file is written (fut2), execute this:
+              fs.move("/foo", "/bar", startFuture.completer());
+            },
+            // mark startFuture it as failed if any step fails.
+            startFuture);
   }
 
   public void example7_1(Vertx vertx) {
@@ -277,11 +321,74 @@ public class CoreExamples {
 
   public void configureDNSServers() {
     Vertx vertx = Vertx.vertx(new VertxOptions().
-        setHostnameResolverOptions(
-            new HostnameResolverOptions().
+        setAddressResolverOptions(
+            new AddressResolverOptions().
                 addServer("192.168.0.1").
                 addServer("192.168.0.2:40000"))
     );
   }
 
+  public void configureHosts() {
+    Vertx vertx = Vertx.vertx(new VertxOptions().
+        setAddressResolverOptions(
+            new AddressResolverOptions().
+                setHostsPath("/path/to/hosts"))
+    );
+  }
+
+  public void configureSearchDomains() {
+    Vertx vertx = Vertx.vertx(new VertxOptions().
+        setAddressResolverOptions(
+            new AddressResolverOptions().addSearchDomain("foo.com").addSearchDomain("bar.com"))
+    );
+  }
+
+  public void deployVerticleWithDifferentWorkerPool(Vertx vertx) {
+    vertx.deployVerticle("the-verticle", new DeploymentOptions().setWorkerPoolName("the-specific-pool"));
+  }
+
+  public void configureNative() {
+    Vertx vertx = Vertx.vertx(new VertxOptions().
+      setPreferNativeTransport(true)
+    );
+
+    // True when native is available
+    boolean usingNative = vertx.isNativeTransportEnabled();
+    System.out.println("Running with native: " + usingNative);
+  }
+
+  public void configureLinuxOptions(Vertx vertx, boolean fastOpen, boolean cork, boolean quickAck, boolean reusePort) {
+    // Available on Linux
+    vertx.createHttpServer(new HttpServerOptions()
+      .setTcpFastOpen(fastOpen)
+      .setTcpCork(cork)
+      .setTcpQuickAck(quickAck)
+      .setReusePort(reusePort)
+    );
+  }
+
+  public void configureBSDOptions(Vertx vertx, boolean reusePort) {
+    // Available on BSD
+    vertx.createHttpServer(new HttpServerOptions().setReusePort(reusePort));
+  }
+
+  public void serverWithDomainSockets(Vertx vertx) {
+    // Only available on BSD and Linux
+    vertx.createNetServer().connectHandler(so -> {
+      // Handle application
+    }).listen(SocketAddress.domainSocketAddress("/var/tmp/myservice.sock"));
+  }
+
+  public void clientWithDomainSockets(Vertx vertx) {
+    NetClient netClient = vertx.createNetClient();
+
+    // Only available on BSD and Linux
+    netClient.connect(SocketAddress.domainSocketAddress("/var/tmp/myservice.sock"), ar -> {
+      if (ar.succeeded()) {
+        // Connected
+      } else {
+        ar.cause().printStackTrace();
+      }
+    });
+  }
 }

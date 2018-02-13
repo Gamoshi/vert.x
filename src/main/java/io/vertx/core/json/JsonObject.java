@@ -1,19 +1,13 @@
 /*
- * Copyright (c) 2011-2014 The original author or authors
- * ------------------------------------------------------
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *     The Eclipse Public License is available at
- *     http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *     The Apache License v2.0 is available at
- *     http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
-
 package io.vertx.core.json;
 
 import io.vertx.codegen.annotations.Fluent;
@@ -67,6 +61,42 @@ public class JsonObject implements Iterable<Map.Entry<String, Object>>, ClusterS
    */
   public JsonObject(Map<String, Object> map) {
     this.map = map;
+  }
+
+  /**
+   * Create an instance from a buffer.
+   *
+   * @param buf  the buffer to create the instance from.
+   */
+  public JsonObject(Buffer buf) {
+    fromBuffer(buf);
+  }
+
+  /**
+   * Create a JsonObject from the fields of a Java object.
+   * Faster than calling `new JsonObject(Json.encode(obj))`.
+   *
+   * @param obj
+   *          The object to convert to a JsonObject.
+   * @throws IllegalArgumentException
+   *          if conversion fails due to an incompatible type.
+   */
+  @SuppressWarnings("unchecked")
+  public static JsonObject mapFrom(Object obj) {
+    return new JsonObject((Map<String, Object>) Json.mapper.convertValue(obj, Map.class));
+  }
+
+  /**
+   * Instantiate a Java object from a JsonObject.
+   * Faster than calling `Json.decodeValue(Json.encode(jsonObject), type)`.
+   *
+   * @param type
+   *          The type to instantiate from the JsonObject.
+   * @throws IllegalArgumentException
+   *          if the type cannot be instantiated.
+   */
+  public <T> T mapTo(Class<T> type) {
+    return Json.mapper.convertValue(map, type);
   }
 
   /**
@@ -224,15 +254,16 @@ public class JsonObject implements Iterable<Map.Entry<String, Object>>, ClusterS
   /**
    * Get the instant value with the specified key.
    * <p>
-   * JSON itself has no notion of a date, this extension complies to the RFC-7493, so this method assumes there is a
-   * String value with the key and it contains a ISODATE encoded date, which it decodes if found and returns.
+   * JSON itself has no notion of a temporal types, this extension complies to the RFC-7493, so this method assumes
+   * there is a String value with the key and it contains an ISO 8601 encoded date and time format
+   * such as "2017-04-03T10:25:41Z", which it decodes if found and returns.
    * <p>
    * This method should be used in conjunction with {@link #put(String, java.time.Instant)}
    *
    * @param key  the key to return the value for
    * @return the value or null if no value for that key
    * @throws java.lang.ClassCastException if the value is not a String
-   * @throws java.lang.IllegalArgumentException if the String value is not a legal Base64 encoded value
+   * @throws java.time.format.DateTimeParseException if the String value is not a legal ISO 8601 encoded value
    */
   public Instant getInstant(String key) {
     Objects.requireNonNull(key);
@@ -621,7 +652,8 @@ public class JsonObject implements Iterable<Map.Entry<String, Object>>, ClusterS
   /**
    * Put a Instant into the JSON object with the specified key.
    * <p>
-   * JSON extension RFC7493, instant will first be encoded to ISODATE String.
+   * JSON extension RFC7493, instant will first be encoded to ISO 8601 date and time
+   * String such as "2017-04-03T10:25:41Z".
    *
    * @param key  the key
    * @param value  the value
@@ -660,12 +692,62 @@ public class JsonObject implements Iterable<Map.Entry<String, Object>>, ClusterS
   /**
    * Merge in another JSON object.
    * <p>
-   * This is the equivalent of putting all the entries of the other JSON object into this object.
+   * This is the equivalent of putting all the entries of the other JSON object into this object. This is not a deep
+   * merge, entries containing (sub) JSON objects will be replaced entirely.
    * @param other  the other JSON object
    * @return a reference to this, so the API can be used fluently
    */
   public JsonObject mergeIn(JsonObject other) {
-    map.putAll(other.map);
+    return mergeIn(other, false);
+  }
+
+  /**
+   * Merge in another JSON object.
+   * A deep merge (recursive) matches (sub) JSON objects in the existing tree and replaces all
+   * matching entries. JsonArrays are treated like any other entry, i.e. replaced entirely.
+   * @param other the other JSON object
+   * @param deep if true, a deep merge is performed
+   * @return a reference to this, so the API can be used fluently
+   */
+  public JsonObject mergeIn(JsonObject other, boolean deep) {
+    return mergeIn(other, deep ? Integer.MAX_VALUE : 1);
+  }
+
+  /**
+   * Merge in another JSON object.
+   * The merge is deep (recursive) to the specified level. If depth is 0, no merge is performed,
+   * if depth is greater than the depth of one of the objects, a full deep merge is performed.
+   * @param other the other JSON object
+   * @param depth depth of merge
+   * @return a reference to this, so the API can be used fluently
+   */
+  @SuppressWarnings("unchecked")
+  public JsonObject mergeIn(JsonObject other, int depth) {
+    if (depth < 1) {
+      return this;
+    }
+    if (depth == 1) {
+      map.putAll(other.map);
+      return this;
+    }
+    for (Map.Entry<String, Object> e: other.map.entrySet()) {
+      if (e.getValue() == null){
+        map.put(e.getKey(), null);
+      } else {
+        map.merge(e.getKey(), e.getValue(), (oldVal, newVal) -> {
+          if (oldVal instanceof Map) {
+            oldVal = new JsonObject((Map)oldVal);
+          }
+          if (newVal instanceof Map) {
+            newVal = new JsonObject((Map)newVal);
+          }
+          if (oldVal instanceof JsonObject && newVal instanceof JsonObject) {
+            return ((JsonObject) oldVal).mergeIn((JsonObject)newVal, depth - 1);
+          }
+          return newVal;
+        });
+      }
+    }
     return this;
   }
 
@@ -689,12 +771,26 @@ public class JsonObject implements Iterable<Map.Entry<String, Object>>, ClusterS
   }
 
   /**
+   * Encode this JSON object as buffer.
+   *
+   * @return the buffer encoding.
+   */
+  public Buffer toBuffer() {
+    return Json.encodeToBuffer(map);
+  }
+
+  /**
    * Copy the JSON object
    *
    * @return a copy of the object
    */
   public JsonObject copy() {
-    Map<String, Object> copiedMap = new HashMap<>(map.size());
+    Map<String, Object> copiedMap;
+    if (map instanceof LinkedHashMap) {
+      copiedMap = new LinkedHashMap<>(map.size());
+    } else {
+      copiedMap = new HashMap<>(map.size());
+    }
     for (Map.Entry<String, Object> entry: map.entrySet()) {
       Object val = entry.getValue();
       val = Json.checkAndCopy(val, true);
@@ -704,7 +800,9 @@ public class JsonObject implements Iterable<Map.Entry<String, Object>>, ClusterS
   }
 
   /**
-   * Get the underlying Map.
+   * Get the underlying {@code Map} as is.
+   *
+   * This map may contain values that are not the types returned by the {@code JsonObject}.
    *
    * @return the underlying Map.
    */
@@ -848,6 +946,10 @@ public class JsonObject implements Iterable<Map.Entry<String, Object>>, ClusterS
 
   private void fromJson(String json) {
     map = Json.decodeValue(json, Map.class);
+  }
+
+  private void fromBuffer(Buffer buf) {
+    map = Json.decodeValue(buf, Map.class);
   }
 
   private class Iter implements Iterator<Map.Entry<String, Object>> {

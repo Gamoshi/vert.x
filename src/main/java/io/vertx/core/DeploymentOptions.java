@@ -1,17 +1,12 @@
 /*
- * Copyright (c) 2011-2014 The original author or authors
- * ------------------------------------------------------
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *     The Eclipse Public License is available at
- *     http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *     The Apache License v2.0 is available at
- *     http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.core;
@@ -30,7 +25,7 @@ import java.util.List;
  *
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
-@DataObject(generateConverter = true)
+@DataObject(generateConverter = true, publicConverter = false)
 public class DeploymentOptions {
 
   public static final boolean DEFAULT_WORKER = false;
@@ -43,6 +38,9 @@ public class DeploymentOptions {
   private boolean worker;
   private boolean multiThreaded;
   private String isolationGroup;
+  private String workerPoolName;
+  private int workerPoolSize;
+  private long maxWorkerExecuteTime;
   private boolean ha;
   private List<String> extraClasspath;
   private int instances;
@@ -58,6 +56,9 @@ public class DeploymentOptions {
     this.isolationGroup = DEFAULT_ISOLATION_GROUP;
     this.ha = DEFAULT_HA;
     this.instances = DEFAULT_INSTANCES;
+    this.workerPoolName = null;
+    this.workerPoolSize = VertxOptions.DEFAULT_WORKER_POOL_SIZE;
+    this.maxWorkerExecuteTime = VertxOptions.DEFAULT_MAX_WORKER_EXECUTE_TIME;
   }
 
   /**
@@ -74,6 +75,9 @@ public class DeploymentOptions {
     this.extraClasspath = other.getExtraClasspath() == null ? null : new ArrayList<>(other.getExtraClasspath());
     this.instances = other.instances;
     this.isolatedClasses = other.getIsolatedClasses() == null ? null : new ArrayList<>(other.getIsolatedClasses());
+    this.workerPoolName = other.workerPoolName;
+    setWorkerPoolSize(other.workerPoolSize);
+    setMaxWorkerExecuteTime(other.maxWorkerExecuteTime);
   }
 
   /**
@@ -275,22 +279,87 @@ public class DeploymentOptions {
   }
 
   /**
+   * @return the worker pool name
+   */
+  public String getWorkerPoolName() {
+    return workerPoolName;
+  }
+
+  /**
+   * Set the worker pool name to use for this verticle. When no name is set, the Vert.x
+   * worker pool will be used, when a name is set, the verticle will use a named worker pool.
+   *
+   * @param workerPoolName the worker pool name
+   * @return a reference to this, so the API can be used fluently
+   */
+  public DeploymentOptions setWorkerPoolName(String workerPoolName) {
+    this.workerPoolName = workerPoolName;
+    return this;
+  }
+
+  /**
+   * Get the maximum number of worker threads to be used by the worker pool when the verticle is deployed
+   * with a {@link #setWorkerPoolName}. When the verticle does not use a named worker pool, this option
+   * has no effect.
+   * <p>
+   * Worker threads are used for running blocking code and worker verticles.
+   *
+   * @return the maximum number of worker threads
+   */
+  public int getWorkerPoolSize() {
+    return workerPoolSize;
+  }
+
+  /**
+   * Set the maximum number of worker threads to be used by the Vert.x instance.
+   *
+   * @param workerPoolSize the number of threads
+   * @return a reference to this, so the API can be used fluently
+   */
+  public DeploymentOptions setWorkerPoolSize(int workerPoolSize) {
+    if (workerPoolSize < 1) {
+      throw new IllegalArgumentException("workerPoolSize must be > 0");
+    }
+    this.workerPoolSize = workerPoolSize;
+    return this;
+  }
+
+  /**
+   * Get the value of max worker execute time, in ns.
+   * <p>
+   * Vert.x will automatically log a warning if it detects that worker threads haven't returned within this time.
+   * <p>
+   * This can be used to detect where the user is blocking a worker thread for too long. Although worker threads
+   * can be blocked longer than event loop threads, they shouldn't be blocked for long periods of time.
+   *
+   * @return The value of max worker execute time, in ns.
+   */
+  public long getMaxWorkerExecuteTime() {
+    return maxWorkerExecuteTime;
+  }
+
+  /**
+   * Sets the value of max worker execute time, in ns.
+   *
+   * @param maxWorkerExecuteTime the value of max worker execute time, in ns.
+   * @return a reference to this, so the API can be used fluently
+   */
+  public DeploymentOptions setMaxWorkerExecuteTime(long maxWorkerExecuteTime) {
+    if (maxWorkerExecuteTime < 1) {
+      throw new IllegalArgumentException("maxWorkerExecuteTime must be > 0");
+    }
+    this.maxWorkerExecuteTime = maxWorkerExecuteTime;
+    return this;
+  }
+
+  /**
    * Convert this to JSON
    *
    * @return  the JSON
    */
   public JsonObject toJson() {
     JsonObject json = new JsonObject();
-    if (worker) json.put("worker", true);
-    if (multiThreaded) json.put("multiThreaded", true);
-    if (isolationGroup != null) json.put("isolationGroup", isolationGroup);
-    if (ha) json.put("ha", true);
-    if (config != null) json.put("config", config);
-    if (extraClasspath != null) json.put("extraClasspath", new JsonArray(extraClasspath));
-    if (instances != DEFAULT_INSTANCES) {
-      json.put("instances", instances);
-    }
-    if (isolatedClasses != null) json.put("isolatedClasses", new JsonArray(isolatedClasses));
+    DeploymentOptionsConverter.toJson(this, json);
     return json;
   }
 
@@ -324,6 +393,9 @@ public class DeploymentOptions {
     result = 31 * result + (extraClasspath != null ? extraClasspath.hashCode() : 0);
     result = 31 * result + instances;
     result = 31 * result + (isolatedClasses != null ? isolatedClasses.hashCode() : 0);
+    result = 31 * result + (workerPoolName != null ? workerPoolName.hashCode() : 0);
+    result = 31 * result + workerPoolSize;
+    result = 31 * result + Long.hashCode(maxWorkerExecuteTime);
     return result;
   }
 }

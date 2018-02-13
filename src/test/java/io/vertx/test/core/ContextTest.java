@@ -1,17 +1,12 @@
 /*
- * Copyright 2014 Red Hat, Inc.
+ * Copyright (c) 2014 Red Hat, Inc. and others
  *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- * The Eclipse Public License is available at
- * http://www.eclipse.org/legal/epl-v10.html
- *
- * The Apache License v2.0 is available at
- * http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.test.core;
@@ -21,11 +16,14 @@ import io.vertx.core.Context;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.impl.ContextImpl;
+import io.vertx.core.WorkerExecutor;
 import io.vertx.core.impl.ContextInternal;
+import io.vertx.core.impl.TaskQueue;
 import org.junit.Test;
 
+import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -91,7 +89,7 @@ public class ContextTest extends VertxTestBase {
 
   @Test
   public void testGettingContextContextUnderContextAnotherInstanceShouldReturnDifferentContext() throws Exception {
-    Vertx other = Vertx.vertx();
+    Vertx other = vertx();
     Context context = vertx.getOrCreateContext();
     context.runOnContext(v -> {
       Context otherContext = other.getOrCreateContext();
@@ -220,11 +218,11 @@ public class ContextTest extends VertxTestBase {
   @Test
   public void testDefaultContextExceptionHandler() {
     RuntimeException failure = new RuntimeException();
+    Context context = vertx.getOrCreateContext();
     vertx.exceptionHandler(err -> {
       assertSame(failure, err);
       testComplete();
     });
-    Context context = vertx.getOrCreateContext();
     context.runOnContext(v -> {
       throw failure;
     });
@@ -269,6 +267,91 @@ public class ContextTest extends VertxTestBase {
         throw failure;
       });
     });
+    await();
+  }
+
+  @Test
+  public void testVerticleUseDifferentExecuteBlockingOrderedExecutor() throws Exception {
+    testVerticleUseDifferentOrderedExecutor(false);
+  }
+
+  @Test
+  public void testWorkerVerticleUseDifferentExecuteBlockingOrderedExecutor() throws Exception {
+    testVerticleUseDifferentOrderedExecutor(true);
+  }
+
+  private void testVerticleUseDifferentOrderedExecutor(boolean worker) throws Exception {
+    waitFor(2);
+    CountDownLatch latch1 = new CountDownLatch(1);
+    CountDownLatch latch2 = new CountDownLatch(1);
+    vertx.deployVerticle(new AbstractVerticle() {
+      @Override
+      public void start() throws Exception {
+        vertx.executeBlocking(fut -> {
+          latch1.countDown();
+          try {
+            awaitLatch(latch2);
+            fut.complete();
+          } catch (InterruptedException e) {
+            fut.fail(e);
+          }
+        }, ar -> {
+          assertTrue(ar.succeeded());
+          complete();
+        });
+      }
+    }, new DeploymentOptions().setWorker(worker));
+    awaitLatch(latch1);
+    CountDownLatch latch3 = new CountDownLatch(1);
+    vertx.deployVerticle(new AbstractVerticle() {
+      @Override
+      public void start() throws Exception {
+        vertx.executeBlocking(fut -> {
+          latch3.countDown();
+          fut.complete();
+        }, ar -> {
+          assertTrue(ar.succeeded());
+          complete();
+        });
+      }
+    }, new DeploymentOptions().setWorker(worker));
+    awaitLatch(latch3);
+    latch2.countDown();
+    await();
+  }
+
+  @Test
+  public void testInternalExecuteBlockingWithQueue() {
+    ContextInternal context = (ContextInternal) vertx.getOrCreateContext();
+    TaskQueue[] queues = new TaskQueue[] { new TaskQueue(), new TaskQueue()};
+    AtomicReference<Thread>[] current = new AtomicReference[queues.length];
+    waitFor(queues.length);
+    for (int i = 0;i < queues.length;i++) {
+      current[i] = new AtomicReference<>();
+    }
+    CyclicBarrier barrier = new CyclicBarrier(queues.length);
+    int numTasks = 10;
+    for (int i = 0;i < numTasks;i++) {
+      int ival = i;
+      for (int j = 0;j < queues.length;j++) {
+        int jval = j;
+        context.executeBlocking(fut -> {
+          if (ival == 0) {
+            current[jval].set(Thread.currentThread());
+          } else {
+            assertSame(Thread.currentThread(), current[jval].get());
+          }
+          try {
+            barrier.await();
+          } catch (Exception e) {
+            fail(e);
+          }
+          if (ival == numTasks - 1) {
+            complete();
+          }
+        }, queues[j], ar -> {});
+      }
+    }
     await();
   }
 }

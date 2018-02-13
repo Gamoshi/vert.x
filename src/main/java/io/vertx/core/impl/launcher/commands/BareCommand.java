@@ -1,26 +1,20 @@
 /*
- *  Copyright (c) 2011-2015 The original author or authors
- *  ------------------------------------------------------
- *  All rights reserved. This program and the accompanying materials
- *  are made available under the terms of the Eclipse Public License v1.0
- *  and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *       The Eclipse Public License is available at
- *       http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *       The Apache License v2.0 is available at
- *       http://www.opensource.org/licenses/apache2.0.php
- *
- *  You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
+
 package io.vertx.core.impl.launcher.commands;
 
-import io.vertx.core.AsyncResult;
-import io.vertx.core.Vertx;
-import io.vertx.core.VertxException;
-import io.vertx.core.VertxOptions;
+import io.vertx.core.*;
 import io.vertx.core.cli.annotations.*;
 import io.vertx.core.impl.launcher.VertxLifecycleHooks;
+import io.vertx.core.logging.Logger;
 import io.vertx.core.metrics.MetricsOptions;
 import io.vertx.core.spi.VertxMetricsFactory;
 import io.vertx.core.spi.launcher.ExecutionContext;
@@ -32,7 +26,6 @@ import java.net.NetworkInterface;
 import java.net.SocketException;
 import java.util.Enumeration;
 import java.util.Properties;
-import java.util.ServiceLoader;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -44,7 +37,7 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 @Summary("Creates a bare instance of vert.x.")
 @Description("This command launches a vert.x instance but do not deploy any verticles. It will " +
-    "receive a verticle if another node of the cluster dies.")
+  "receive a verticle if another node of the cluster dies.")
 @Name("bare")
 public class BareCommand extends ClasspathHandler {
 
@@ -62,6 +55,8 @@ public class BareCommand extends ClasspathHandler {
 
   protected VertxOptions options;
 
+  protected Runnable finalAction;
+
   /**
    * Sets the quorum option.
    *
@@ -69,7 +64,7 @@ public class BareCommand extends ClasspathHandler {
    */
   @Option(longName = "quorum", argName = "q")
   @Description("Used in conjunction with -ha this specifies the minimum number of nodes in the cluster for any HA " +
-      "deploymentIDs to be active. Defaults to 1.")
+    "deploymentIDs to be active. Defaults to 1.")
   @DefaultValue("-1")
   public void setQuorum(int quorum) {
     this.quorum = quorum;
@@ -82,7 +77,7 @@ public class BareCommand extends ClasspathHandler {
    */
   @Option(longName = "hagroup", argName = "group")
   @Description("used in conjunction with -ha this specifies the HA group this node will join. There can be multiple " +
-      "HA groups in a cluster. Nodes will only failover to other nodes in the same group. Defaults to '__DEFAULT__'.")
+    "HA groups in a cluster. Nodes will only failover to other nodes in the same group. Defaults to '__DEFAULT__'.")
   @DefaultValue("__DEFAULT__")
   public void setHAGroup(String group) {
     this.haGroup = group;
@@ -107,7 +102,7 @@ public class BareCommand extends ClasspathHandler {
    */
   @Option(longName = "cluster-host", argName = "host")
   @Description("host to bind to for cluster communication. If this is not specified vert.x will attempt to choose one" +
-      " from the available interfaces.")
+    " from the available interfaces.")
   public void setClusterHost(String host) {
     this.clusterHost = host;
   }
@@ -133,6 +128,16 @@ public class BareCommand extends ClasspathHandler {
    */
   @Override
   public void run() {
+    this.run(null);
+  }
+
+  /**
+   * Starts the vert.x instance and sets the final action (called when vert.x is closed).
+   *
+   * @param action the action, can be {@code null}
+   */
+  public void run(Runnable action) {
+    this.finalAction = action;
     vertx = startVertx();
   }
 
@@ -146,9 +151,16 @@ public class BareCommand extends ClasspathHandler {
     MetricsOptions metricsOptions = getMetricsOptions();
     options = new VertxOptions().setMetricsOptions(metricsOptions);
     configureFromSystemProperties(options, VERTX_OPTIONS_PROP_PREFIX);
+    beforeStartingVertx(options);
     Vertx instance;
     if (isClustered()) {
       log.info("Starting clustering...");
+      if (!options.getClusterHost().equals(VertxOptions.DEFAULT_CLUSTER_HOST)) {
+        clusterHost = options.getClusterHost();
+      }
+      if (options.getClusterPort() != VertxOptions.DEFAULT_CLUSTER_PORT) {
+        clusterPort = options.getClusterPort();
+      }
       if (clusterHost == null) {
         clusterHost = getDefaultAddress();
         if (clusterHost == null) {
@@ -172,7 +184,6 @@ public class BareCommand extends ClasspathHandler {
         }
       }
 
-      beforeStartingVertx(options);
       create(options, ar -> {
         result.set(ar);
         latch.countDown();
@@ -194,10 +205,9 @@ public class BareCommand extends ClasspathHandler {
       }
       instance = result.get().result();
     } else {
-      beforeStartingVertx(options);
       instance = create(options);
     }
-    addShutdownHook();
+    addShutdownHook(instance, log, finalAction);
     afterStartingVertx(instance);
     return instance;
   }
@@ -231,9 +241,8 @@ public class BareCommand extends ClasspathHandler {
    */
   protected MetricsOptions getMetricsOptions() {
     MetricsOptions metricsOptions;
-    ServiceLoader<VertxMetricsFactory> factories = ServiceLoader.load(VertxMetricsFactory.class);
-    if (factories.iterator().hasNext()) {
-      VertxMetricsFactory factory = factories.iterator().next();
+    VertxMetricsFactory factory = ServiceHelper.loadFactoryOrNull(VertxMetricsFactory.class);
+    if (factory != null) {
       metricsOptions = factory.newOptions();
     } else {
       metricsOptions = new MetricsOptions();
@@ -304,12 +313,28 @@ public class BareCommand extends ClasspathHandler {
   }
 
   /**
-   * Registers a shutdown hook closing the vert.x instance when the JVM is terminating.
+   * Registers a shutdown hook closing the given vert.x instance when the JVM is terminating.
+   * Optionally, an action can be executed after the termination of the {@link Vertx} instance.
+   *
+   * @param vertx  the vert.x instance, must not be {@code null}
+   * @param log    the log, must not be {@code null}
+   * @param action the action, may be {@code null}
    */
-  protected void addShutdownHook() {
-    Runtime.getRuntime().addShutdownHook(new Thread() {
-      public void run() {
-        CountDownLatch latch = new CountDownLatch(1);
+  protected static void addShutdownHook(Vertx vertx, Logger log, Runnable action) {
+    Runtime.getRuntime().addShutdownHook(new Thread(getTerminationRunnable(vertx, log, action)));
+  }
+
+  /**
+   * Gets the termination runnable used to close the Vert.x instance.
+   *
+   * @param vertx  the vert.x instance, must not be {@code null}
+   * @param log    the log, must not be {@code null}
+   * @param action the action, may be {@code null}
+   */
+  public static Runnable getTerminationRunnable(Vertx vertx, Logger log, Runnable action) {
+    return () -> {
+      CountDownLatch latch = new CountDownLatch(1);
+      if (vertx != null) {
         vertx.close(ar -> {
           if (!ar.succeeded()) {
             log.error("Failure in stopping Vert.x", ar.cause());
@@ -320,11 +345,14 @@ public class BareCommand extends ClasspathHandler {
           if (!latch.await(2, TimeUnit.MINUTES)) {
             log.error("Timed out waiting to undeploy all");
           }
+          if (action != null) {
+            action.run();
+          }
         } catch (InterruptedException e) {
           throw new IllegalStateException(e);
         }
       }
-    });
+    };
   }
 
   /**
@@ -346,7 +374,7 @@ public class BareCommand extends ClasspathHandler {
       while (addresses.hasMoreElements()) {
         InetAddress address = addresses.nextElement();
         if (!address.isAnyLocalAddress() && !address.isMulticastAddress()
-            && !(address instanceof Inet6Address)) {
+          && !(address instanceof Inet6Address)) {
           return address.getHostAddress();
         }
       }
@@ -362,5 +390,12 @@ public class BareCommand extends ClasspathHandler {
    */
   public void setExecutionContext(ExecutionContext context) {
     this.executionContext = context;
+  }
+
+  /**
+   * @return the vert.x instance if created.
+   */
+  public synchronized Vertx vertx() {
+    return vertx;
   }
 }

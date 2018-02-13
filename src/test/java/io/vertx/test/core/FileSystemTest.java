@@ -1,29 +1,26 @@
 /*
- * Copyright 2014 Red Hat, Inc.
+ * Copyright (c) 2014 Red Hat, Inc. and others
  *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- * The Eclipse Public License is available at
- * http://www.eclipse.org/legal/epl-v10.html
- *
- * The Apache License v2.0 is available at
- * http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.test.core;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
-import io.vertx.core.AsyncResultHandler;
+import io.vertx.core.AsyncResult;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.file.AsyncFile;
+import io.vertx.core.file.CopyOptions;
 import io.vertx.core.file.FileProps;
+import io.vertx.core.file.FileSystem;
 import io.vertx.core.file.FileSystemException;
 import io.vertx.core.file.FileSystemProps;
 import io.vertx.core.file.OpenOptions;
@@ -34,28 +31,37 @@ import io.vertx.core.streams.Pump;
 import io.vertx.core.streams.ReadStream;
 import io.vertx.core.streams.WriteStream;
 import org.junit.Assume;
+import org.junit.AssumptionViolatedException;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.GroupPrincipal;
 import java.nio.file.attribute.PosixFileAttributes;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.nio.file.attribute.UserPrincipal;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.vertx.test.core.TestUtils.*;
+import static org.hamcrest.CoreMatchers.*;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
@@ -647,7 +653,7 @@ public class FileSystemTest extends VertxTestBase {
 
   private void testProps(String fileName, boolean link, boolean shouldPass,
                          Handler<FileProps> afterOK) throws Exception {
-    AsyncResultHandler<FileProps> handler = ar -> {
+    Handler<AsyncResult<FileProps>> handler = ar -> {
       if (ar.failed()) {
         if (shouldPass) {
           fail(ar.cause().getMessage());
@@ -869,7 +875,7 @@ public class FileSystemTest extends VertxTestBase {
 
   private void testMkdir(String dirName, String perms, boolean createParents,
                          boolean shouldPass, Handler<Void> afterOK) throws Exception {
-    AsyncResultHandler<Void> handler = createHandler(shouldPass, afterOK);
+    Handler<AsyncResult<Void>> handler = createHandler(shouldPass, afterOK);
     if (createParents) {
       if (perms != null) {
         vertx.fileSystem().mkdirs(testDir + pathSep + dirName, perms, handler);
@@ -948,7 +954,7 @@ public class FileSystemTest extends VertxTestBase {
 
   private void testReadDir(String dirName, String filter, boolean shouldPass,
                            Handler<List<String>> afterOK) throws Exception {
-    AsyncResultHandler<List<String>> handler = ar -> {
+    Handler<AsyncResult<List<String>>> handler = ar -> {
       if (ar.failed()) {
         if (shouldPass) {
           fail(ar.cause().getMessage());
@@ -1151,11 +1157,9 @@ public class FileSystemTest extends VertxTestBase {
     createFile(fileName, existing);
     byte[] content = TestUtils.randomByteArray(chunkSize * chunks);
     Buffer buff = Buffer.buffer(content);
-    vertx.fileSystem().open(testDir + pathSep + fileName, new OpenOptions(), ar -> {
+    vertx.fileSystem().open(testDir + pathSep + fileName, new OpenOptions().setAppend(true), ar -> {
       if (ar.succeeded()) {
         AsyncFile ws = ar.result();
-        long size = vertx.fileSystem().propsBlocking(testDir + pathSep + fileName).size();
-        ws.setWritePos(size);
         ws.exceptionHandler(t -> fail(t.getMessage()));
         for (int i = 0; i < chunks; i++) {
           Buffer chunk = buff.getBuffer(i * chunkSize, (i + 1) * chunkSize);
@@ -1396,7 +1400,7 @@ public class FileSystemTest extends VertxTestBase {
 
   private void testCreateFile(String perms, boolean shouldPass) throws Exception {
     String fileName = "some-file.dat";
-    AsyncResultHandler<Void> handler = ar -> {
+    Handler<AsyncResult<Void>> handler = ar -> {
       if (ar.failed()) {
         if (shouldPass) {
           fail(ar.cause().getMessage());
@@ -1546,7 +1550,43 @@ public class FileSystemTest extends VertxTestBase {
     await();
   }
 
-  private AsyncResultHandler<Void> createHandler(boolean shouldPass, Handler<Void> afterOK) {
+  @Test
+  public void testDrainNotCalledAfterClose() throws Exception {
+    String fileName = "some-file.dat";
+    vertx.fileSystem().open(testDir + pathSep + fileName, new OpenOptions(), onSuccess(file -> {
+      Buffer buf = TestUtils.randomBuffer(1024 * 1024);
+      file.write(buf);
+      AtomicBoolean drainAfterClose = new AtomicBoolean();
+      file.drainHandler(v -> {
+        drainAfterClose.set(true);
+      });
+      file.close(ar -> {
+        assertFalse(drainAfterClose.get());
+        testComplete();
+      });
+    }));
+    await();
+  }
+
+  @Test
+  public void testResumeFileInEndHandler() throws Exception {
+    Buffer expected = TestUtils.randomBuffer(10000);
+    String fileName = "some-file.dat";
+    createFile(fileName, expected.getBytes());
+    vertx.fileSystem().open(testDir + pathSep + fileName, new OpenOptions(), onSuccess(file -> {
+      Buffer buffer = Buffer.buffer();
+      file.endHandler(v -> {
+        assertEquals(buffer.length(), expected.length());
+        file.pause();
+        file.resume();
+        complete();
+      });
+      file.handler(buffer::appendBuffer);
+    }));
+    await();
+  }
+
+  private Handler<AsyncResult<Void>> createHandler(boolean shouldPass, Handler<Void> afterOK) {
     return ar -> {
       if (ar.failed()) {
         if (shouldPass) {
@@ -1641,5 +1681,176 @@ public class FileSystemTest extends VertxTestBase {
   private void deleteFile(String fileName) {
     File file = new File(testDir + pathSep + fileName);
     file.delete();
+  }
+
+  // @Repeat(times=1000)
+  @Test
+  public void testAsyncFileConcurrency() throws Exception {
+    String fileName = "some-file.dat";
+
+    AtomicReference<AsyncFile> arFile = new AtomicReference<>();
+    CountDownLatch latch = new CountDownLatch(1);
+    vertx.fileSystem().open(testDir + pathSep + fileName, new OpenOptions(), ar -> {
+      if (ar.succeeded()) {
+        AsyncFile af = ar.result();
+        arFile.set(af);
+      } else {
+        fail(ar.cause().getMessage());
+      }
+      latch.countDown();
+    });
+    awaitLatch(latch);
+
+    AsyncFile af = arFile.get();
+
+    Buffer buff = Buffer.buffer(randomByteArray(4096));
+    for (int i = 0; i < 100000; i++) {
+      af.write(buff);
+    }
+
+    af.close(onSuccess(v -> {
+      testComplete();
+    }));
+
+    await();
+  }
+
+  @Test
+  public void testAtomicMove() throws Exception {
+    String source = "foo.txt";
+    String middle = "baz.txt";
+    String target = "bar.txt";
+    createFileWithJunk(source, 100);
+
+    try {
+      Files.move(new File(testDir, source).toPath(), new File(testDir, middle).toPath(), StandardCopyOption.ATOMIC_MOVE);
+    } catch (AtomicMoveNotSupportedException e) {
+      throw new AssumptionViolatedException("Atomic move unsupported");
+    }
+
+    FileSystem fs = vertx.fileSystem();
+    String from = testDir + pathSep + middle;
+    String to = testDir + pathSep + target;
+    CopyOptions options = new CopyOptions().setAtomicMove(true);
+
+    fs.move(from, to, options, onSuccess(v -> {
+      assertFalse(fileExists(middle));
+      assertTrue(fileExists(target));
+      complete();
+    }));
+    await();
+  }
+
+  @Test
+  public void testCopyReplaceExisting() throws Exception {
+    String source = "foo.txt";
+    String target = "bar.txt";
+    createFileWithJunk(source, 100);
+    createFileWithJunk(target, 100);
+
+    FileSystem fs = vertx.fileSystem();
+    String from = testDir + pathSep + source;
+    String to = testDir + pathSep + target;
+    CopyOptions options = new CopyOptions().setReplaceExisting(true);
+
+    fs.copy(from, to, options, onSuccess(v -> {
+      fs.readFile(from, onSuccess(expected -> {
+        fs.readFile(to, onSuccess(actual -> {
+          assertEquals(expected, actual);
+          complete();
+        }));
+      }));
+    }));
+    await();
+  }
+
+  @Test
+  public void testCopyNoReplaceExisting() throws Exception {
+    String source = "foo.txt";
+    String target = "bar.txt";
+    createFileWithJunk(source, 100);
+    createFileWithJunk(target, 100);
+
+    FileSystem fs = vertx.fileSystem();
+    String from = testDir + pathSep + source;
+    String to = testDir + pathSep + target;
+    CopyOptions options = new CopyOptions();
+
+    fs.copy(from, to, options, onFailure(t -> {
+      assertThat(t, instanceOf(FileSystemException.class));
+      assertThat(t.getCause(), instanceOf(FileAlreadyExistsException.class));
+      complete();
+    }));
+    await();
+  }
+
+  @Test
+  public void testCopyFileAttributes() throws Exception {
+    String source = "foo.txt";
+    String target = "bar.txt";
+    createFileWithJunk(source, 100);
+
+    try {
+      Files.setPosixFilePermissions(new File(testDir, source).toPath(), EnumSet.of(PosixFilePermission.OWNER_READ));
+    } catch (UnsupportedOperationException e) {
+      throw new AssumptionViolatedException("POSIX file perms unsupported");
+    }
+
+    FileSystem fs = vertx.fileSystem();
+    String from = testDir + pathSep + source;
+    String to = testDir + pathSep + target;
+    CopyOptions options = new CopyOptions().setCopyAttributes(false);
+
+    fs.copy(from, to, options, onSuccess(v -> {
+      fs.props(from, onSuccess(expected -> {
+        fs.props(from, onSuccess(actual -> {
+          assertEquals(expected.creationTime(), actual.creationTime());
+          assertEquals(expected.lastModifiedTime(), actual.lastModifiedTime());
+          vertx.<Set<PosixFilePermission>>executeBlocking(fut -> {
+            try {
+              fut.complete(Files.getPosixFilePermissions(new File(testDir, target).toPath(), LinkOption.NOFOLLOW_LINKS));
+            } catch (IOException e) {
+              fut.fail(e);
+            }
+          }, onSuccess(perms -> {
+            assertEquals(EnumSet.of(PosixFilePermission.OWNER_READ), perms);
+            complete();
+          }));
+        }));
+      }));
+    }));
+    await();
+  }
+
+  @Test
+  public void testCopyNoFollowLinks() throws Exception {
+    String source = "foo.txt";
+    String link = "link.txt";
+    String target = "bar.txt";
+    createFileWithJunk(source, 100);
+
+    try {
+      Files.createSymbolicLink(new File(testDir, link).toPath(), new File(testDir, source).toPath());
+    } catch (UnsupportedOperationException e) {
+      throw new AssumptionViolatedException("Links unsupported");
+    }
+
+    FileSystem fs = vertx.fileSystem();
+    String from = testDir + pathSep + link;
+    String to = testDir + pathSep + target;
+    CopyOptions options = new CopyOptions().setNofollowLinks(true);
+
+    fs.copy(from, to, options, onSuccess(v -> {
+      fs.lprops(to, onSuccess(props -> {
+        assertTrue(props.isSymbolicLink());
+        fs.readFile(from, onSuccess(expected -> {
+          fs.readFile(to, onSuccess(actual -> {
+            assertEquals(expected, actual);
+            complete();
+          }));
+        }));
+      }));
+    }));
+    await();
   }
 }

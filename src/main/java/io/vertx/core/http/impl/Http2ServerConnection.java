@@ -1,22 +1,16 @@
 /*
- * Copyright (c) 2011-2013 The original author or authors
- *  ------------------------------------------------------
- *  All rights reserved. This program and the accompanying materials
- *  are made available under the terms of the Eclipse Public License v1.0
- *  and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *      The Eclipse Public License is available at
- *      http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *      The Apache License v2.0 is available at
- *      http://www.opensource.org/licenses/apache2.0.php
- *
- *  You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.core.http.impl;
 
-import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpHeaderValues;
@@ -31,11 +25,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.MultiMap;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.core.http.HttpMethod;
-import io.vertx.core.http.HttpServerOptions;
-import io.vertx.core.http.HttpServerRequest;
-import io.vertx.core.http.HttpServerResponse;
-import io.vertx.core.http.StreamResetException;
+import io.vertx.core.http.*;
 import io.vertx.core.impl.ContextImpl;
 import io.vertx.core.spi.metrics.HttpServerMetrics;
 
@@ -52,30 +42,27 @@ public class Http2ServerConnection extends Http2ConnectionBase {
   private final String serverOrigin;
   private final Handler<HttpServerRequest> requestHandler;
   private final HttpServerMetrics metrics;
-  private final Object metric;
 
   private Long maxConcurrentStreams;
   private int concurrentStreams;
   private final ArrayDeque<Push> pendingPushes = new ArrayDeque<>(8);
 
   Http2ServerConnection(
-      Channel channel,
       ContextImpl context,
       String serverOrigin,
       VertxHttp2ConnectionHandler connHandler,
       HttpServerOptions options,
       Handler<HttpServerRequest> requestHandler,
       HttpServerMetrics metrics) {
-    super(channel, context, connHandler, metrics);
+    super(context, connHandler);
 
     this.options = options;
     this.serverOrigin = serverOrigin;
     this.requestHandler = requestHandler;
-    this.metric = metrics.connected(remoteAddress(), remoteName());
     this.metrics = metrics;
   }
 
-  HttpServerMetrics metrics() {
+  public HttpServerMetrics metrics() {
     return metrics;
   }
 
@@ -117,7 +104,9 @@ public class Http2ServerConnection extends Http2ConnectionBase {
         return;
       }
       String contentEncoding = options.isCompressionSupported() ? HttpUtils.determineContentEncoding(headers) : null;
-      Http2ServerRequestImpl req = new Http2ServerRequestImpl(this, handler.connection().stream(streamId), metrics, serverOrigin, headers, contentEncoding);
+      Http2Stream s = handler.connection().stream(streamId);
+      boolean writable = handler.encoder().flowController().isWritable(s);
+      Http2ServerRequestImpl req = new Http2ServerRequestImpl(this, s, metrics, serverOrigin, headers, contentEncoding, writable);
       stream = req;
       CharSequence value = headers.get(HttpHeaderNames.EXPECT);
       if (options.isHandle100ContinueAutomatically() &&
@@ -127,7 +116,13 @@ public class Http2ServerConnection extends Http2ConnectionBase {
       }
       streams.put(streamId, req);
       context.executeFromIO(() -> {
+        Http2ServerResponseImpl resp = req.response();
+        resp.beginRequest();
         requestHandler.handle(req);
+        boolean hasPush = resp.endRequest();
+        if (hasPush) {
+          ctx.flush();
+        }
       });
     } else {
       // Http server request trailer - not implemented yet (in api)
@@ -148,7 +143,11 @@ public class Http2ServerConnection extends Http2ConnectionBase {
 
   synchronized void sendPush(int streamId, String host, HttpMethod method, MultiMap headers, String path, Handler<AsyncResult<HttpServerResponse>> completionHandler) {
     Http2Headers headers_ = new DefaultHttp2Headers();
-    headers_.method(method.name());
+    if (method == HttpMethod.OTHER) {
+      throw new IllegalArgumentException("Cannot push HttpMethod.OTHER");
+    } else {
+      headers_.method(method.name());
+    }
     headers_.path(path);
     headers_.scheme(isSsl() ? "https" : "http");
     if (host != null) {
@@ -165,7 +164,8 @@ public class Http2ServerConnection extends Http2ConnectionBase {
             int promisedStreamId = ar.result();
             String contentEncoding = HttpUtils.determineContentEncoding(headers_);
             Http2Stream promisedStream = handler.connection().stream(promisedStreamId);
-            Push push = new Push(promisedStream, contentEncoding, method, path, completionHandler);
+            boolean writable = handler.encoder().flowController().isWritable(promisedStream);
+            Push push = new Push(promisedStream, contentEncoding, method, path, writable, completionHandler);
             streams.put(promisedStreamId, push);
             if (maxConcurrentStreams == null || concurrentStreams < maxConcurrentStreams) {
               concurrentStreams++;
@@ -188,11 +188,6 @@ public class Http2ServerConnection extends Http2ConnectionBase {
     super.updateSettings(settingsUpdate, completionHandler);
   }
 
-  @Override
-  protected Object metric() {
-    return metric;
-  }
-
   private class Push extends VertxHttp2Stream<Http2ServerConnection> {
 
     private final HttpMethod method;
@@ -205,8 +200,9 @@ public class Http2ServerConnection extends Http2ConnectionBase {
                 String contentEncoding,
                 HttpMethod method,
                 String uri,
+                boolean writable,
                 Handler<AsyncResult<HttpServerResponse>> completionHandler) {
-      super(Http2ServerConnection.this, stream);
+      super(Http2ServerConnection.this, stream, writable);
       this.method = method;
       this.uri = uri;
       this.contentEncoding = contentEncoding;

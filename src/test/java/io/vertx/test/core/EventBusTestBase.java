@@ -1,33 +1,38 @@
 /*
- * Copyright 2014 Red Hat, Inc.
+ * Copyright (c) 2014 Red Hat, Inc. and others
  *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- * The Eclipse Public License is available at
- * http://www.eclipse.org/legal/epl-v10.html
- *
- * The Apache License v2.0 is available at
- * http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.test.core;
 
 import io.netty.util.CharsetUtil;
 import io.vertx.core.AbstractVerticle;
+import io.vertx.core.Context;
 import io.vertx.core.DeploymentOptions;
+import io.vertx.core.Future;
+import io.vertx.core.Verticle;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.eventbus.DeliveryOptions;
+import io.vertx.core.eventbus.EventBus;
 import io.vertx.core.eventbus.MessageCodec;
+import io.vertx.core.eventbus.MessageConsumer;
+import io.vertx.core.eventbus.ReplyException;
+import io.vertx.core.eventbus.ReplyFailure;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+
+import static org.hamcrest.CoreMatchers.*;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
@@ -335,25 +340,6 @@ public abstract class EventBusTestBase extends VertxTestBase {
   }
 
   @Test
-  public void testSendFromWorker() throws Exception {
-    String expectedBody = TestUtils.randomAlphaString(20);
-    startNodes(2);
-    vertices[1].eventBus().<String>consumer(ADDRESS1, msg -> {
-      assertEquals(expectedBody, msg.body());
-      testComplete();
-    }).completionHandler(ar -> {
-      assertTrue(ar.succeeded());
-      vertices[0].deployVerticle(new AbstractVerticle() {
-        @Override
-        public void start() throws Exception {
-          vertices[0].eventBus().send(ADDRESS1, expectedBody);
-        }
-      }, new DeploymentOptions().setWorker(true));
-    });
-    await();
-  }
-
-  @Test
   public void testReplyFromWorker() throws Exception {
     String expectedBody = TestUtils.randomAlphaString(20);
     startNodes(2);
@@ -375,6 +361,201 @@ public abstract class EventBusTestBase extends VertxTestBase {
       assertEquals(expectedBody, reply.result().body());
       testComplete();
     });
+    await();
+  }
+
+  @Test
+  public void testSendFromExecuteBlocking() throws Exception {
+    String expectedBody = TestUtils.randomAlphaString(20);
+    CountDownLatch receivedLatch = new CountDownLatch(1);
+    startNodes(2);
+    vertices[1].eventBus().<String>consumer(ADDRESS1, msg -> {
+      assertEquals(expectedBody, msg.body());
+      receivedLatch.countDown();
+    }).completionHandler(ar -> {
+      assertTrue(ar.succeeded());
+      vertices[0].executeBlocking(fut -> {
+        vertices[0].eventBus().send(ADDRESS1, expectedBody);
+        try {
+          awaitLatch(receivedLatch); // Make sure message is sent even if we're busy
+        } catch (InterruptedException e) {
+          Thread.interrupted();
+          fut.fail(e);
+        }
+        fut.complete();
+      }, ar2 -> {
+        if (ar2.succeeded()) {
+          testComplete();
+        } else {
+          fail(ar2.cause());
+        }
+      });
+    });
+    await();
+  }
+
+  @Test
+  public void testNoHandlersCallbackContext() {
+    startNodes(2);
+    waitFor(4);
+
+    // On an "external" thread
+    vertices[0].eventBus().send("blah", "blah", ar -> {
+      assertTrue(ar.failed());
+      if (ar.cause() instanceof ReplyException) {
+        ReplyException cause = (ReplyException) ar.cause();
+        assertSame(ReplyFailure.NO_HANDLERS, cause.failureType());
+      } else {
+        fail(ar.cause());
+      }
+      assertTrue("Not an EL thread", Context.isOnEventLoopThread());
+      complete();
+    });
+
+    // On a EL context
+    vertices[0].runOnContext(v -> {
+      Context ctx = vertices[0].getOrCreateContext();
+      vertices[0].eventBus().send("blah", "blah", ar -> {
+        assertTrue(ar.failed());
+        if (ar.cause() instanceof ReplyException) {
+          ReplyException cause = (ReplyException) ar.cause();
+          assertSame(ReplyFailure.NO_HANDLERS, cause.failureType());
+        } else {
+          fail(ar.cause());
+        }
+        assertSame(ctx, vertices[0].getOrCreateContext());
+        complete();
+      });
+    });
+
+    // On a Worker context
+    vertices[0].deployVerticle(new AbstractVerticle() {
+      @Override
+      public void start() throws Exception {
+        Context ctx = getVertx().getOrCreateContext();
+        vertices[0].eventBus().send("blah", "blah", ar -> {
+          assertTrue(ar.failed());
+          if (ar.cause() instanceof ReplyException) {
+            ReplyException cause = (ReplyException) ar.cause();
+            assertSame(ReplyFailure.NO_HANDLERS, cause.failureType());
+          } else {
+            fail(ar.cause());
+          }
+          assertSame(ctx, getVertx().getOrCreateContext());
+          complete();
+        });
+      }
+    }, new DeploymentOptions().setWorker(true));
+
+    // Inside executeBlocking
+    vertices[0].executeBlocking(fut -> {
+      vertices[0].eventBus().send("blah", "blah", ar -> {
+        assertTrue(ar.failed());
+        if (ar.cause() instanceof ReplyException) {
+          ReplyException cause = (ReplyException) ar.cause();
+          assertSame(ReplyFailure.NO_HANDLERS, cause.failureType());
+        } else {
+          fail(ar.cause());
+        }
+        assertTrue("Not an EL thread", Context.isOnEventLoopThread());
+        complete();
+      });
+      fut.complete();
+    }, false, null);
+
+    await();
+  }
+
+  private long burnCpu() {
+    long res = 1;
+    for (int i = 2; i <= 2000; i++) {
+      res = res * i;
+    }
+    return res;
+  }
+
+  @Test
+  public void testSendWhileUnsubscribing() throws Exception {
+    startNodes(2);
+
+    AtomicBoolean unregistered = new AtomicBoolean();
+
+    Verticle sender = new AbstractVerticle() {
+
+      @Override
+      public void start() throws Exception {
+        getVertx().runOnContext(v -> sendMsg());
+      }
+
+      private void sendMsg() {
+        if (!unregistered.get()) {
+          getVertx().eventBus().send("whatever", "marseille");
+          burnCpu();
+          getVertx().runOnContext(v -> sendMsg());
+        } else {
+          getVertx().eventBus().send("whatever", "marseille", ar -> {
+            Throwable cause = ar.cause();
+            assertThat(cause, instanceOf(ReplyException.class));
+            ReplyException replyException = (ReplyException) cause;
+            assertEquals(ReplyFailure.NO_HANDLERS, replyException.failureType());
+            testComplete();
+          });
+        }
+      }
+    };
+
+    Verticle receiver = new AbstractVerticle() {
+      boolean unregisterCalled;
+
+      @Override
+      public void start(Future<Void> startFuture) throws Exception {
+        EventBus eventBus = getVertx().eventBus();
+        MessageConsumer<String> consumer = eventBus.consumer("whatever");
+        consumer.handler(m -> {
+          if (!unregisterCalled) {
+            consumer.unregister(v -> unregistered.set(true));
+            unregisterCalled = true;
+          }
+          m.reply("ok");
+        }).completionHandler(startFuture);
+      }
+    };
+
+    CountDownLatch deployLatch = new CountDownLatch(1);
+    vertices[0].exceptionHandler(this::fail).deployVerticle(receiver, onSuccess(receiverId -> {
+      vertices[1].exceptionHandler(this::fail).deployVerticle(sender, onSuccess(senderId -> {
+        deployLatch.countDown();
+      }));
+    }));
+    awaitLatch(deployLatch);
+
+    await();
+
+    CountDownLatch closeLatch = new CountDownLatch(2);
+    vertices[0].close(v -> closeLatch.countDown());
+    vertices[1].close(v -> closeLatch.countDown());
+    awaitLatch(closeLatch);
+  }
+
+  @Test
+  public void testMessageBodyInterceptor() throws Exception {
+    String content = TestUtils.randomUnicodeString(13);
+    startNodes(2);
+    waitFor(2);
+    CountDownLatch latch = new CountDownLatch(1);
+    vertices[0].eventBus().registerCodec(new StringLengthCodec()).<Integer>consumer("whatever", msg -> {
+      assertEquals(content.length(), (int) msg.body());
+      complete();
+    }).completionHandler(ar -> latch.countDown());
+    awaitLatch(latch);
+    StringLengthCodec codec = new StringLengthCodec();
+    vertices[1].eventBus().registerCodec(codec).addInterceptor(sc -> {
+      if ("whatever".equals(sc.message().address())) {
+        assertEquals(content, sc.sentBody());
+        complete();
+      }
+      sc.next();
+    }).send("whatever", content, new DeliveryOptions().setCodecName(codec.name()));
     await();
   }
 
@@ -549,4 +730,88 @@ public abstract class EventBusTestBase extends VertxTestBase {
     }
   }
 
+  public static class MyReplyException extends ReplyException {
+
+    public MyReplyException(int failureCode, String message) {
+      super(ReplyFailure.RECIPIENT_FAILURE, failureCode, message);
+    }
+  }
+
+  public static class MyReplyExceptionMessageCodec implements
+      MessageCodec<MyReplyException, MyReplyException> {
+
+    @Override
+    public void encodeToWire(Buffer buffer, MyReplyException body) {
+      buffer.appendInt(body.failureCode());
+      if (body.getMessage() == null) {
+        buffer.appendByte((byte)0);
+      } else {
+        buffer.appendByte((byte)1);
+        byte[] encoded = body.getMessage().getBytes(CharsetUtil.UTF_8);
+        buffer.appendInt(encoded.length);
+        buffer.appendBytes(encoded);
+      }
+    }
+
+    @Override
+    public MyReplyException decodeFromWire(int pos, Buffer buffer) {
+      int failureCode = buffer.getInt(pos);
+      pos += 4;
+      boolean isNull = buffer.getByte(pos) == (byte)0;
+      String message;
+      if (!isNull) {
+        pos++;
+        int strLength = buffer.getInt(pos);
+        pos += 4;
+        byte[] bytes = buffer.getBytes(pos, pos + strLength);
+        message = new String(bytes, CharsetUtil.UTF_8);
+      } else {
+        message = null;
+      }
+      return new MyReplyException(failureCode, message);
+    }
+
+    @Override
+    public MyReplyException transform(MyReplyException obj) {
+      return obj;
+    }
+
+    @Override
+    public String name() {
+      return "myReplyException";
+    }
+
+    @Override
+    public byte systemCodecID() {
+      return -1;
+    }
+  }
+
+  public static class StringLengthCodec implements MessageCodec<String, Integer> {
+
+    @Override
+    public void encodeToWire(Buffer buffer, String s) {
+      buffer.appendInt(s.length());
+    }
+
+    @Override
+    public Integer decodeFromWire(int pos, Buffer buffer) {
+      return buffer.getInt(pos);
+    }
+
+    @Override
+    public Integer transform(String s) {
+      return s.length();
+    }
+
+    @Override
+    public String name() {
+      return getClass().getName();
+    }
+
+    @Override
+    public byte systemCodecID() {
+      return -1;
+    }
+  }
 }

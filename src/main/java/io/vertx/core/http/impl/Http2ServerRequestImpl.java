@@ -1,17 +1,12 @@
 /*
- * Copyright (c) 2011-2013 The original author or authors
- *  ------------------------------------------------------
- *  All rights reserved. This program and the accompanying materials
- *  are made available under the terms of the Eclipse Public License v1.0
- *  and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *      The Eclipse Public License is available at
- *      http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *      The Apache License v2.0 is available at
- *      http://www.opensource.org/licenses/apache2.0.php
- *
- *  You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.core.http.impl;
@@ -47,9 +42,12 @@ import io.vertx.core.net.SocketAddress;
 import io.vertx.core.spi.metrics.HttpServerMetrics;
 
 import javax.net.ssl.SSLPeerUnverifiedException;
+import javax.net.ssl.SSLSession;
 import javax.security.cert.X509Certificate;
 import java.net.URISyntaxException;
 import java.nio.channels.ClosedChannelException;
+
+import static io.vertx.core.spi.metrics.Metrics.METRICS_ENABLED;
 
 /**
  * @author <a href="mailto:julien@julienviet.com">Julien Viet</a>
@@ -64,6 +62,7 @@ public class Http2ServerRequestImpl extends VertxHttp2Stream<Http2ServerConnecti
   private MultiMap headersMap;
   private MultiMap params;
   private HttpMethod method;
+  private String rawMethod;
   private String absoluteURI;
   private String uri;
   private String path;
@@ -79,13 +78,13 @@ public class Http2ServerRequestImpl extends VertxHttp2Stream<Http2ServerConnecti
   private HttpPostRequestDecoder postRequestDecoder;
 
   private Handler<Throwable> exceptionHandler;
-  private Handler<HttpFrame> unknownFrameHandler;
+  private Handler<HttpFrame> customFrameHandler;
 
   private NetSocket netSocket;
 
   public Http2ServerRequestImpl(Http2ServerConnection conn, Http2Stream stream, HttpServerMetrics metrics,
-      String serverOrigin, Http2Headers headers, String contentEncoding) {
-    super(conn, stream);
+      String serverOrigin, Http2Headers headers, String contentEncoding, boolean writable) {
+    super(conn, stream, writable);
 
     this.serverOrigin = serverOrigin;
     this.headers = headers;
@@ -95,7 +94,7 @@ public class Http2ServerRequestImpl extends VertxHttp2Stream<Http2ServerConnecti
       int idx = serverOrigin.indexOf("://");
       host = serverOrigin.substring(idx + 3);
     }
-    Object metric = metrics.isEnabled() ? metrics.requestBegin(conn.metric(), this) : null;
+    Object metric = (METRICS_ENABLED && metrics != null) ? metrics.requestBegin(conn.metric(), this) : null;
     this.response = new Http2ServerResponseImpl(conn, this, metric, false, contentEncoding, host);
   }
 
@@ -124,9 +123,9 @@ public class Http2ServerRequestImpl extends VertxHttp2Stream<Http2ServerConnecti
   }
 
   @Override
-  void handleUnknownFrame(int type, int flags, Buffer buff) {
-    if (unknownFrameHandler != null) {
-      unknownFrameHandler.handle(new HttpFrameImpl(type, flags, buff));
+  void handleCustomFrame(int type, int flags, Buffer buff) {
+    if (customFrameHandler != null) {
+      customFrameHandler.handle(new HttpFrameImpl(type, flags, buff));
     }
   }
 
@@ -204,7 +203,9 @@ public class Http2ServerRequestImpl extends VertxHttp2Stream<Http2ServerConnecti
   @Override
   public HttpServerRequest handler(Handler<Buffer> handler) {
     synchronized (conn) {
-      checkEnded();
+      if (handler != null) {
+        checkEnded();
+      }
       dataHandler = handler;
     }
     return this;
@@ -229,7 +230,9 @@ public class Http2ServerRequestImpl extends VertxHttp2Stream<Http2ServerConnecti
   @Override
   public HttpServerRequest endHandler(Handler<Void> handler) {
     synchronized (conn) {
-      checkEnded();
+      if (handler != null) {
+        checkEnded();
+      }
       endHandler = handler;
     }
     return this;
@@ -248,6 +251,16 @@ public class Http2ServerRequestImpl extends VertxHttp2Stream<Http2ServerConnecti
         method = HttpUtils.toVertxMethod(sMethod);
       }
       return method;
+    }
+  }
+
+  @Override
+  public String rawMethod() {
+    synchronized (conn) {
+      if (rawMethod == null) {
+        rawMethod = headers.method().toString();
+      }
+      return rawMethod;
     }
   }
 
@@ -358,8 +371,13 @@ public class Http2ServerRequestImpl extends VertxHttp2Stream<Http2ServerConnecti
   }
 
   @Override
+  public SSLSession sslSession() {
+    return conn.sslSession();
+  }
+
+  @Override
   public X509Certificate[] peerCertificateChain() throws SSLPeerUnverifiedException {
-    return conn.getPeerCertificateChain();
+    return conn.peerCertificateChain();
   }
 
   @Override
@@ -433,7 +451,9 @@ public class Http2ServerRequestImpl extends VertxHttp2Stream<Http2ServerConnecti
   @Override
   public HttpServerRequest uploadHandler(@Nullable Handler<HttpServerFileUpload> handler) {
     synchronized (conn) {
-      checkEnded();
+      if (handler != null) {
+        checkEnded();
+      }
       uploadHandler = handler;
       return this;
     }
@@ -468,9 +488,9 @@ public class Http2ServerRequestImpl extends VertxHttp2Stream<Http2ServerConnecti
   }
 
   @Override
-  public HttpServerRequest unknownFrameHandler(Handler<HttpFrame> handler) {
+  public HttpServerRequest customFrameHandler(Handler<HttpFrame> handler) {
     synchronized (conn) {
-      unknownFrameHandler = handler;
+      customFrameHandler = handler;
       return this;
     }
   }

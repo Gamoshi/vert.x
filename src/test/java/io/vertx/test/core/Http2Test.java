@@ -1,31 +1,32 @@
 /*
- * Copyright (c) 2011-2013 The original author or authors
- *  ------------------------------------------------------
- *  All rights reserved. This program and the accompanying materials
- *  are made available under the terms of the Eclipse Public License v1.0
- *  and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *      The Eclipse Public License is available at
- *      http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *      The Apache License v2.0 is available at
- *      http://www.opensource.org/licenses/apache2.0.php
- *
- *  You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.test.core;
 
+import io.netty.channel.socket.SocketChannel;
+import io.vertx.core.Context;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.core.http.HttpClientOptions;
-import io.vertx.core.http.HttpClientRequest;
-import io.vertx.core.http.HttpServerOptions;
-import io.vertx.core.http.StreamResetException;
-import io.vertx.core.net.PemKeyCertOptions;
-import io.vertx.core.net.SSLEngine;
+import io.vertx.core.http.*;
+import io.vertx.core.http.impl.Http2ServerConnection;
+import io.vertx.core.net.OpenSSLEngineOptions;
+import io.vertx.test.core.tls.Cert;
 import org.junit.Test;
 
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * @author <a href="mailto:julien@julienviet.com">Julien Viet</a>
@@ -47,6 +48,11 @@ public class Http2Test extends HttpTest {
   @Override
   protected HttpClientOptions createBaseClientOptions() {
     return Http2TestBase.createHttp2ClientOptions();
+  }
+
+  @Override
+  public void testCloseHandlerNotCalledWhenConnectionClosedAfterEnd() throws Exception {
+    testCloseHandlerNotCalledWhenConnectionClosedAfterEnd(1);
   }
 
   // Extra test
@@ -126,7 +132,7 @@ public class Http2Test extends HttpTest {
         .setUseAlpn(true)
         .setSsl(true)
         .addEnabledCipherSuite("TLS_RSA_WITH_AES_128_CBC_SHA") // Non Diffie-helman -> debuggable in wireshark
-        .setPemKeyCertOptions((PemKeyCertOptions) TLSCert.PEM.getServerKeyCertOptions()).setSslEngine(SSLEngine.OPENSSL);
+        .setPemKeyCertOptions(Cert.SERVER_PEM.get()).setSslEngineOptions(new OpenSSLEngineOptions());
     server.close();
     client.close();
     client = vertx.createHttpClient(createBaseClientOptions());
@@ -147,6 +153,272 @@ public class Http2Test extends HttpTest {
       assertEquals(200, resp.statusCode());
       testComplete();
     }).exceptionHandler(this::fail).end();
+    await();
+  }
+
+  @Test
+  public void testServerStreamPausedWhenConnectionIsPaused() throws Exception {
+    CountDownLatch fullLatch = new CountDownLatch(1);
+    CompletableFuture<Void> resumeLatch = new CompletableFuture<>();
+    server.requestHandler(req -> {
+      HttpServerResponse resp = req.response();
+      switch (req.path()) {
+        case "/0": {
+          vertx.setPeriodic(1, timerID -> {
+            if (resp.writeQueueFull()) {
+              vertx.cancelTimer(timerID);
+              fullLatch.countDown();
+            } else {
+              resp.write(Buffer.buffer(TestUtils.randomAlphaString(512)));
+            }
+          });
+          break;
+        }
+        case "/1": {
+          assertTrue(resp.writeQueueFull());
+          resp.drainHandler(v -> {
+            resp.end();
+          });
+          resumeLatch.complete(null);
+          break;
+        }
+      }
+    });
+    startServer();
+    client.getNow(DEFAULT_HTTP_PORT, DEFAULT_HTTP_HOST, "/0", resp -> {
+      resp.pause();
+      Context ctx = vertx.getOrCreateContext();
+      resumeLatch.thenAccept(v1 -> {
+        ctx.runOnContext(v2 -> {
+          resp.endHandler(v -> {
+            testComplete();
+          });
+          resp.resume();
+        });
+      });
+    });
+    awaitLatch(fullLatch);
+    client.getNow(DEFAULT_HTTP_PORT, DEFAULT_HTTP_HOST, "/1", resp -> {
+      resp.endHandler(v -> {
+        complete();
+      });
+    });
+    resumeLatch.get(20, TimeUnit.SECONDS); // Make sure it completes
+    await();
+  }
+
+  @Test
+  public void testClientStreamPausedWhenConnectionIsPaused() throws Exception {
+    waitFor(2);
+    Buffer buffer = TestUtils.randomBuffer(512);
+    CompletableFuture<Void> resumeLatch = new CompletableFuture<>();
+    server.requestHandler(req -> {
+      switch (req.path()) {
+        case "/0": {
+          req.pause();
+          resumeLatch.thenAccept(v -> {
+            req.resume();
+          });
+          req.endHandler(v -> {
+            req.response().end();
+          });
+          break;
+        }
+        case "/1": {
+          req.bodyHandler(v -> {
+            assertEquals(v, buffer);
+            req.response().end();
+          });
+          break;
+        }
+      }
+    });
+    startServer();
+    HttpClientRequest req1 = client.get(DEFAULT_HTTP_PORT, DEFAULT_HTTP_HOST, "/0", resp -> {
+      complete();
+    }).setChunked(true);
+    while (!req1.writeQueueFull()) {
+      req1.write(Buffer.buffer(TestUtils.randomAlphaString(512)));
+      Thread.sleep(1);
+    }
+    HttpClientRequest req2 = client.get(DEFAULT_HTTP_PORT, DEFAULT_HTTP_HOST, "/1", resp -> {
+      complete();
+    }).setChunked(true);
+    assertFalse(req2.writeQueueFull());
+    req2.sendHead(v -> {
+      assertTrue(req2.writeQueueFull());
+      resumeLatch.complete(null);
+    });
+    resumeLatch.get(20, TimeUnit.SECONDS);
+    assertWaitUntil(() -> !req2.writeQueueFull());
+    req1.end();
+    req2.end(buffer);
+    await();
+  }
+
+  @Test
+  public void testResetClientRequestNotYetSent() throws Exception {
+    waitFor(2);
+    server.close();
+    server = vertx.createHttpServer(createBaseServerOptions().setInitialSettings(new Http2Settings().setMaxConcurrentStreams(1)));
+    AtomicInteger numReq = new AtomicInteger();
+    server.requestHandler(req -> {
+      assertEquals(0, numReq.getAndIncrement());
+      req.response().end();
+      complete();
+    });
+    startServer();
+    HttpClientRequest post = client.post(DEFAULT_HTTP_PORT, DEFAULT_HTTP_HOST, DEFAULT_TEST_URI, resp -> {
+      fail();
+    });
+    post.setChunked(true).write(TestUtils.randomBuffer(1024));
+    assertTrue(post.reset());
+    client.getNow(DEFAULT_HTTP_PORT, DEFAULT_HTTP_HOST, DEFAULT_TEST_URI, resp -> {
+      assertEquals(1, numReq.get());
+      complete();
+    });
+    await();
+  }
+
+  @Test
+  public void testDiscardConnectionWhenChannelBecomesInactive() throws Exception {
+    AtomicInteger count = new AtomicInteger();
+    server.requestHandler(req -> {
+      if (count.getAndIncrement() == 0) {
+        Http2ServerConnection a = (Http2ServerConnection) req.connection();
+        SocketChannel channel = (SocketChannel) a.channel();
+        channel.shutdown();
+      } else {
+        req.response().end();
+      }
+    });
+    startServer();
+    AtomicBoolean closed = new AtomicBoolean();
+    client.get(DEFAULT_HTTP_PORT, DEFAULT_HTTP_HOST, DEFAULT_TEST_URI, resp -> {
+      fail();
+    }).connectionHandler(conn -> conn.closeHandler(v -> closed.set(true))).end();
+    assertWaitUntil(closed::get);
+    client.get(DEFAULT_HTTP_PORT, DEFAULT_HTTP_HOST, DEFAULT_TEST_URI, resp -> {
+      testComplete();
+    }).exceptionHandler(err -> {
+      fail();
+    }).end();
+    await();
+  }
+
+  @Test
+  public void testClientDoesNotSupportAlpn() throws Exception {
+    waitFor(2);
+    server.requestHandler(req -> {
+      assertEquals(HttpVersion.HTTP_1_1, req.version());
+      req.response().end();
+      complete();
+    });
+    startServer();
+    client.close();
+    client = vertx.createHttpClient(createBaseClientOptions().setProtocolVersion(HttpVersion.HTTP_1_1).setUseAlpn(false));
+    client.get(DEFAULT_HTTP_PORT, DEFAULT_HTTP_HOST, DEFAULT_TEST_URI, resp -> {
+      assertEquals(HttpVersion.HTTP_1_1, resp.version());
+      complete();
+    }).exceptionHandler(this::fail).end();
+    await();
+  }
+
+  @Test
+  public void testServerDoesNotSupportAlpn() throws Exception {
+    waitFor(2);
+    server.close();
+    server = vertx.createHttpServer(createBaseServerOptions().setUseAlpn(false));
+    server.requestHandler(req -> {
+      assertEquals(HttpVersion.HTTP_1_1, req.version());
+      req.response().end();
+      complete();
+    });
+    startServer();
+    client.get(DEFAULT_HTTP_PORT, DEFAULT_HTTP_HOST, DEFAULT_TEST_URI, resp -> {
+      assertEquals(HttpVersion.HTTP_1_1, resp.version());
+      complete();
+    }).exceptionHandler(this::fail).end();
+    await();
+  }
+
+  @Test
+  public void testClientMakeRequestHttp2WithSSLWithoutAlpn() throws Exception {
+    client.close();
+    client = vertx.createHttpClient(createBaseClientOptions().setUseAlpn(false));
+    try {
+      client.get(DEFAULT_HTTP_PORT, DEFAULT_HTTP_HOST, DEFAULT_TEST_URI);
+      fail();
+    } catch (IllegalArgumentException ignore) {
+      // Expected
+    }
+  }
+
+  @Test
+  public void testServePendingRequests() throws Exception {
+    int n = 10;
+    waitFor(n);
+    LinkedList<HttpServerRequest> requests = new LinkedList<>();
+    Set<HttpConnection> connections = new HashSet<>();
+    server.requestHandler(req -> {
+      requests.add(req);
+      connections.add(req.connection());
+      assertEquals(1, connections.size());
+      if (requests.size() == n) {
+        while (requests.size() > 0) {
+          requests.removeFirst().response().end();
+        }
+      }
+    });
+    startServer();
+    for (int i = 0;i < n;i++) {
+      client.get(DEFAULT_HTTP_PORT, DEFAULT_HTTP_HOST, DEFAULT_TEST_URI, resp -> complete()).end();
+    }
+    await();
+  }
+
+  @Test
+  public void testInitialMaxConcurrentStreamZero() throws Exception {
+    AtomicLong concurrency = new AtomicLong();
+    server.close();
+    server = vertx.createHttpServer(createBaseServerOptions().setInitialSettings(new Http2Settings().setMaxConcurrentStreams(0)));
+    server.requestHandler(req -> {
+      assertEquals(10, concurrency.get());
+      req.response().end();
+    });
+    server.connectionHandler(conn -> {
+      vertx.setTimer(500, id -> {
+        conn.updateSettings(new Http2Settings().setMaxConcurrentStreams(10));
+      });
+    });
+    startServer();
+    client.get(DEFAULT_HTTP_PORT, DEFAULT_HTTP_HOST, DEFAULT_TEST_URI, resp -> {
+      testComplete();
+    }).connectionHandler(conn -> {
+      assertEquals(0, conn.remoteSettings().getMaxConcurrentStreams());
+      conn.remoteSettingsHandler(settings -> concurrency.set(settings.getMaxConcurrentStreams()));
+    }).setTimeout(10000).exceptionHandler(err -> fail(err)).end();
+    await();
+  }
+
+  @Test
+  public void testFoo() throws Exception {
+    waitFor(2);
+    server.requestHandler(req -> {
+      HttpServerResponse resp = req.response();
+      resp.write("Hello");
+      resp.end("World");
+      assertNull(resp.headers().get("content-length"));
+      complete();
+    });
+    startServer();
+    client.getNow(DEFAULT_HTTP_PORT, DEFAULT_HTTP_HOST, DEFAULT_TEST_URI, resp -> {
+      assertNull(resp.getHeader("content-length"));
+      resp.bodyHandler(body -> {
+        assertEquals("HelloWorld", body.toString());
+        complete();
+      });
+    });
     await();
   }
 }

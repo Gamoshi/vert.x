@@ -1,17 +1,12 @@
 /*
- * Copyright (c) 2011-2014 The original author or authors
- * ------------------------------------------------------
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *     The Eclipse Public License is available at
- *     http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *     The Apache License v2.0 is available at
- *     http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.test.core;
@@ -303,7 +298,7 @@ public class JsonArrayTest {
 
   @Test
   public void testGetJsonObject() {
-    JsonObject obj = new JsonObject().put("foo", "bar");    
+    JsonObject obj = new JsonObject().put("foo", "bar");
     jsonArray.add(obj);
     assertEquals(obj, jsonArray.getJsonObject(0));
     try {
@@ -847,6 +842,25 @@ public class JsonArrayTest {
   }
 
   @Test
+  public void testEncodeToBuffer() throws Exception {
+    jsonArray.add("foo");
+    jsonArray.add(123);
+    jsonArray.add(1234l);
+    jsonArray.add(1.23f);
+    jsonArray.add(2.34d);
+    jsonArray.add(true);
+    byte[] bytes = TestUtils.randomByteArray(10);
+    jsonArray.add(bytes);
+    jsonArray.addNull();
+    jsonArray.add(new JsonObject().put("foo", "bar"));
+    jsonArray.add(new JsonArray().add("foo").add(123));
+    String strBytes = Base64.getEncoder().encodeToString(bytes);
+    Buffer expected = Buffer.buffer("[\"foo\",123,1234,1.23,2.34,true,\"" + strBytes + "\",null,{\"foo\":\"bar\"},[\"foo\",123]]", "UTF-8");
+    Buffer json = jsonArray.toBuffer();
+    assertArrayEquals(expected.getBytes(), json.getBytes());
+  }
+
+  @Test
   public void testDecode() {
     byte[] bytes = TestUtils.randomByteArray(10);
     String strBytes = Base64.getEncoder().encodeToString(bytes);
@@ -1028,6 +1042,15 @@ public class JsonArrayTest {
   }
 
   @Test
+  public void testCreateFromBuffer() {
+    JsonArray excepted = new JsonArray();
+    excepted.add("foobar");
+    excepted.add(123);
+    Buffer buf = Buffer.buffer(excepted.encode());
+    assertEquals(excepted, new JsonArray(buf));
+  }
+
+  @Test
   public void testClusterSerializable() {
     jsonArray.add("foo").add(123);
     Buffer buff = Buffer.buffer();
@@ -1061,6 +1084,25 @@ public class JsonArrayTest {
     JsonObject object = new JsonObject(json);
     testStreamCorrectTypes(object.copy());
     testStreamCorrectTypes(object);
+  }
+
+  @Test
+  public void testRemoveMethodReturnedObject() {
+    JsonArray obj = new JsonArray();
+    obj.add("bar")
+        .add(new JsonObject().put("name", "vert.x").put("count", 2))
+        .add(new JsonArray().add(1.0).add(2.0));
+
+    Object removed = obj.remove(0);
+    assertTrue(removed instanceof String);
+
+    removed = obj.remove(0);
+    assertTrue(removed instanceof JsonObject);
+    assertEquals(((JsonObject) removed).getString("name"), "vert.x");
+
+    removed = obj.remove(0);
+    assertTrue(removed instanceof JsonArray);
+    assertEquals(((JsonArray) removed).getDouble(0), 1.0, 0.0);
   }
 
   private void testStreamCorrectTypes(JsonObject object) {

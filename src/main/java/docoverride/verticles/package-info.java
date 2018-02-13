@@ -1,17 +1,12 @@
 /*
- * Copyright 2014 Red Hat, Inc.
+ * Copyright (c) 2014 Red Hat, Inc. and others
  *
- *  All rights reserved. This program and the accompanying materials
- *  are made available under the terms of the Eclipse Public License v1.0
- *  and Apache License v2.0 which accompanies this distribution.
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *  The Eclipse Public License is available at
- *  http://www.eclipse.org/legal/epl-v10.html
- *
- *  The Apache License v2.0 is available at
- *  http://www.opensource.org/licenses/apache2.0.php
- *
- *  You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 /**
@@ -49,16 +44,17 @@
  * === Asynchronous Verticle start and stop
  *
  * Sometimes you want to do something in your verticle start-up which takes some time and you don't want the verticle to
- * be considered deployed until that happens. For example you might want to deploy other verticles in the start method.
+ * be considered deployed until that happens. For example you might want to start an HTTP server in the start method and
+ * propagate the asynchronous result of the server `listen` method.
  *
- * You can't block waiting for the other verticles to deploy in your start method as that would break the <<golden_rule, Golden Rule>>.
+ * You can't block waiting for the HTTP server to bind in your start method as that would break the <<golden_rule, Golden Rule>>.
  *
  * So how can you do this?
  *
  * The way to do it is to implement the *asynchronous* start method. This version of the method takes a Future as a parameter.
  * When the method returns the verticle will *not* be considered deployed.
  *
- * Some time later, after you've done everything you need to do (e.g. start other verticles), you can call complete
+ * Some time later, after you've done everything you need to do (e.g. start the HTTP server), you can call complete
  * on the Future (or fail) to signal that you're done.
  *
  * Here's an example:
@@ -66,10 +62,17 @@
  * ----
  * public class MyVerticle extends AbstractVerticle {
  *
- *   public void start(Future<Void> startFuture) {
- *     // Now deploy some other verticle:
+ *   private HttpServeer server;
  *
- *     vertx.deployVerticle("com.foo.OtherVerticle", res -> {
+ *   public void start(Future<Void> startFuture) {
+ *     server = vertx.createHttpServer().requestHandler(req -> {
+ *       req.response()
+ *         .putHeader("content-type", "text/plain")
+ *         .end("Hello from Vert.x!");
+ *       });
+ *
+ *     // Now bind the server:
+ *     server.listen(8080, res -> {
  *       if (res.succeeded()) {
  *         startFuture.complete();
  *       } else {
@@ -102,8 +105,8 @@
  * }
  * ----
  *
- * INFO: You don't need to manually undeploy child verticles started by a verticle, in the verticle's stop method. Vert.x
- * will automatically undeploy any child verticles when the parent is undeployed.
+ * INFO: You don't need to manually the HTTP server started by a verticle, in the verticle's stop method. Vert.x
+ * will automatically stop any running server when the verticle is undeployed.
  */
 @Document(fileName = "override/verticles.adoc")
 package docoverride.verticles;

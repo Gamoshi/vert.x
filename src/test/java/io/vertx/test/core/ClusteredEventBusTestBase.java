@@ -1,36 +1,24 @@
 /*
- *  Copyright (c) 2011-2015 The original author or authors
- *  ------------------------------------------------------
- *  All rights reserved. This program and the accompanying materials
- *  are made available under the terms of the Eclipse Public License v1.0
- *  and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *       The Eclipse Public License is available at
- *       http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *       The Apache License v2.0 is available at
- *       http://www.opensource.org/licenses/apache2.0.php
- *
- *  You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.test.core;
 
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Handler;
-import io.vertx.core.Vertx;
-import io.vertx.core.VertxOptions;
 import io.vertx.core.eventbus.*;
-import io.vertx.core.impl.VertxInternal;
 import io.vertx.core.spi.cluster.ClusterManager;
 import io.vertx.test.fakecluster.FakeClusterManager;
 import org.junit.Test;
 
-import java.util.ArrayList;
 import java.util.Map;
-import java.util.concurrent.ConcurrentLinkedDeque;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
@@ -54,6 +42,7 @@ public class ClusteredEventBusTestBase extends EventBusTestBase {
 
     MessageConsumer<T> reg = vertices[1].eventBus().<T>consumer(ADDRESS1).handler((Message<T> msg) -> {
       if (consumer == null) {
+        assertTrue(msg.isSend());
         assertEquals(received, msg.body());
         if (options != null) {
           assertNotNull(msg.headers());
@@ -109,6 +98,7 @@ public class ClusteredEventBusTestBase extends EventBusTestBase {
       assertTrue(ar.succeeded());
       vertices[0].eventBus().send(ADDRESS1, str, onSuccess((Message<R> reply) -> {
         if (consumer == null) {
+          assertTrue(reply.isSend());
           assertEquals(received, reply.body());
           if (options != null && options.getHeaders() != null) {
             assertNotNull(reply.headers());
@@ -164,6 +154,7 @@ public class ClusteredEventBusTestBase extends EventBusTestBase {
       @Override
       public void handle(Message<T> msg) {
         if (consumer == null) {
+          assertFalse(msg.isSend());
           assertEquals(val, msg.body());
         } else {
           consumer.accept(msg.body());

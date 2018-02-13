@@ -1,17 +1,12 @@
 /*
- * Copyright (c) 2011-2014 The original author or authors
- * ------------------------------------------------------
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *     The Eclipse Public License is available at
- *     http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *     The Apache License v2.0 is available at
- *     http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.core.metrics.impl;
@@ -32,15 +27,8 @@ import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.http.ServerWebSocket;
 import io.vertx.core.http.WebSocket;
-import io.vertx.core.spi.metrics.DatagramSocketMetrics;
-import io.vertx.core.spi.metrics.EventBusMetrics;
-import io.vertx.core.spi.metrics.HttpClientMetrics;
-import io.vertx.core.spi.metrics.HttpServerMetrics;
-import io.vertx.core.spi.metrics.TCPMetrics;
-import io.vertx.core.spi.metrics.VertxMetrics;
-import io.vertx.core.net.NetClient;
+import io.vertx.core.spi.metrics.*;
 import io.vertx.core.net.NetClientOptions;
-import io.vertx.core.net.NetServer;
 import io.vertx.core.net.NetServerOptions;
 import io.vertx.core.net.SocketAddress;
 
@@ -48,6 +36,8 @@ import io.vertx.core.net.SocketAddress;
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
 public class DummyVertxMetrics implements VertxMetrics {
+
+  public static final DummyVertxMetrics INSTANCE = new DummyVertxMetrics();
 
   @Override
   public void verticleDeployed(Verticle verticle) {
@@ -67,32 +57,37 @@ public class DummyVertxMetrics implements VertxMetrics {
 
   @Override
   public EventBusMetrics createMetrics(EventBus eventBus) {
-    return new DummyEventBusMetrics();
+    return DummyEventBusMetrics.INSTANCE;
   }
 
   @Override
   public HttpServerMetrics createMetrics(HttpServer server, SocketAddress localAddress, HttpServerOptions options) {
-    return new DummyHttpServerMetrics();
+    return DummyHttpServerMetrics.INSTANCE;
   }
 
   @Override
   public HttpClientMetrics createMetrics(HttpClient client, HttpClientOptions options) {
-    return new DummyHttpClientMetrics();
+    return DummyHttpClientMetrics.INSTANCE;
   }
 
   @Override
-  public TCPMetrics createMetrics(NetServer server, SocketAddress localAddress, NetServerOptions options) {
-    return new DummyTCPMetrics();
+  public TCPMetrics createMetrics(SocketAddress localAddress, NetServerOptions options) {
+    return DummyTCPMetrics.INSTANCE;
   }
 
   @Override
-  public TCPMetrics createMetrics(NetClient client, NetClientOptions options) {
-    return new DummyTCPMetrics();
+  public TCPMetrics createMetrics(NetClientOptions options) {
+    return DummyTCPMetrics.INSTANCE;
   }
 
   @Override
   public DatagramSocketMetrics createMetrics(DatagramSocket socket, DatagramSocketOptions options) {
-    return new DummyDatagramMetrics();
+    return DummyDatagramMetrics.INSTANCE;
+  }
+
+  @Override
+  public <P> PoolMetrics<?> createMetrics(P pool, String poolType, String poolName, int maxPoolSize) {
+    return DummyWorkerPoolMetrics.INSTANCE;
   }
 
   @Override
@@ -109,7 +104,9 @@ public class DummyVertxMetrics implements VertxMetrics {
     return false;
   }
 
-  protected class DummyEventBusMetrics implements EventBusMetrics<Void> {
+  public static class DummyEventBusMetrics implements EventBusMetrics<Void> {
+
+    public static final DummyEventBusMetrics INSTANCE = new DummyEventBusMetrics();
 
     @Override
     public void messageWritten(String address, int numberOfBytes) {
@@ -130,6 +127,10 @@ public class DummyVertxMetrics implements VertxMetrics {
 
     @Override
     public void beginHandleMessage(Void handler, boolean local) {
+    }
+
+    @Override
+    public void scheduleMessage(Void handler, boolean local) {
     }
 
     @Override
@@ -158,7 +159,9 @@ public class DummyVertxMetrics implements VertxMetrics {
     }
   }
 
-  protected class DummyHttpServerMetrics implements HttpServerMetrics<Void, Void, Void> {
+  public static class DummyHttpServerMetrics implements HttpServerMetrics<Void, Void, Void> {
+
+    public static final DummyHttpServerMetrics INSTANCE = new DummyHttpServerMetrics();
 
     @Override
     public Void requestBegin(Void socketMetric, HttpServerRequest request) {
@@ -223,15 +226,60 @@ public class DummyVertxMetrics implements VertxMetrics {
     }
   }
 
-  protected class DummyHttpClientMetrics implements HttpClientMetrics<Void, Void, Void> {
+  public static class DummyHttpClientMetrics implements HttpClientMetrics<Void, Void, Void, Void, Void> {
+
+    public static final DummyHttpClientMetrics INSTANCE = new DummyHttpClientMetrics();
 
     @Override
-    public Void requestBegin(Void socketMetric, SocketAddress localAddress, SocketAddress remoteAddress, HttpClientRequest request) {
+    public Void createEndpoint(String host, int port, int maxPoolSize) {
       return null;
     }
 
     @Override
-    public Void responsePushed(Void socketMetric, SocketAddress localAddress, SocketAddress remoteAddress, HttpClientRequest request) {
+    public Void enqueueRequest(Void endpointMetric) {
+      return null;
+    }
+
+    @Override
+    public void dequeueRequest(Void endpointMetric, Void taskMetric) {
+    }
+
+    @Override
+    public void closeEndpoint(String host, int port, Void endpointMetric) {
+    }
+
+    @Override
+    public void endpointConnected(Void endpointMetric, Void socketMetric) {
+    }
+
+    @Override
+    public Void connected(SocketAddress remoteAddress, String remoteName) {
+      return null;
+    }
+
+    @Override
+    public void disconnected(Void socketMetric, SocketAddress remoteAddress) {
+    }
+
+    @Override
+    public void endpointDisconnected(Void endpointMetric, Void socketMetric) {
+    }
+
+    @Override
+    public Void requestBegin(Void endpointMetric, Void socketMetric, SocketAddress localAddress, SocketAddress remoteAddress, HttpClientRequest request) {
+      return null;
+    }
+
+    @Override
+    public void requestEnd(Void requestMetric) {
+    }
+
+    @Override
+    public void responseBegin(Void requestMetric, HttpClientResponse response) {
+    }
+
+    @Override
+    public Void responsePushed(Void endpointMetric, Void socketMetric, SocketAddress localAddress, SocketAddress remoteAddress, HttpClientRequest request) {
       return null;
     }
 
@@ -244,15 +292,6 @@ public class DummyVertxMetrics implements VertxMetrics {
     }
 
     @Override
-    public Void connected(SocketAddress remoteAddress, String remoteName) {
-      return null;
-    }
-
-    @Override
-    public void disconnected(Void socketMetric, SocketAddress remoteAddress) {
-    }
-
-    @Override
     public void bytesRead(Void socketMetric, SocketAddress remoteAddress, long numberOfBytes) {
     }
 
@@ -274,7 +313,7 @@ public class DummyVertxMetrics implements VertxMetrics {
     }
 
     @Override
-    public Void connected(Void socketMetric, WebSocket webSocket) {
+    public Void connected(Void endpointMetric, Void socketMetric, WebSocket webSocket) {
       return null;
     }
 
@@ -283,7 +322,9 @@ public class DummyVertxMetrics implements VertxMetrics {
     }
   }
 
-  protected class DummyTCPMetrics implements TCPMetrics<Void> {
+  public static class DummyTCPMetrics implements TCPMetrics<Void> {
+
+    public static final DummyTCPMetrics INSTANCE = new DummyTCPMetrics();
 
     @Override
     public Void connected(SocketAddress remoteAddress, String remoteName) {
@@ -316,7 +357,9 @@ public class DummyVertxMetrics implements VertxMetrics {
     }
   }
 
-  protected class DummyDatagramMetrics implements DatagramSocketMetrics {
+  public static class DummyDatagramMetrics implements DatagramSocketMetrics {
+
+    public static final DummyDatagramMetrics INSTANCE = new DummyDatagramMetrics();
 
     @Override
     public void listening(String localName, SocketAddress localAddress) {
@@ -341,6 +384,37 @@ public class DummyVertxMetrics implements VertxMetrics {
     @Override
     public boolean isEnabled() {
       return false;
+    }
+  }
+
+  public static class DummyWorkerPoolMetrics implements PoolMetrics<Void> {
+
+    public static final DummyWorkerPoolMetrics INSTANCE = new DummyWorkerPoolMetrics();
+
+    @Override
+    public Void submitted() {
+      return null;
+    }
+
+    @Override
+    public void rejected(Void t) {
+    }
+
+    @Override
+    public Void begin(Void t) {
+      return t;
+    }
+
+    public void end(Void t, boolean succeeded) {
+    }
+
+    @Override
+    public boolean isEnabled() {
+      return false;
+    }
+
+    @Override
+    public void close() {
     }
   }
 }

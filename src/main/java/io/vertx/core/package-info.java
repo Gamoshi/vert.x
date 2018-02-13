@@ -1,17 +1,12 @@
 /*
- * Copyright (c) 2011-2014 The original author or authors
- * ------------------------------------------------------
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *     The Eclipse Public License is available at
- *     http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *     The Apache License v2.0 is available at
- *     http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 /**
@@ -34,6 +29,7 @@
  * * DNS client
  * * File system access
  * * High availability
+ * * Native transports
  * * Clustering
  *
  * The functionality in core is fairly low level - you won't find stuff like database access, authorisation or high level
@@ -56,9 +52,11 @@
  *
  * == In the beginning there was Vert.x
  *
- * NOTE: Much of this is Java specific - need someway of swapping in language specific parts
+ * ////
+ * TODO Much of this is Java specific - need someway of swapping in language specific parts
+ * ////
  *
- * You can't do much in Vert.x-land unless you can commune with a {@link io.vertx.core.Vertx} object!
+ * You can't do much in Vert.x-land unless you can communicate with a {@link io.vertx.core.Vertx} object!
  *
  * It's the control centre of Vert.x and is how you do pretty much everything, including creating clients and servers,
  * getting a reference to the event bus, setting timers, as well as many other things.
@@ -71,8 +69,6 @@
  * ----
  * {@link examples.CoreExamples#example1}
  * ----
- *
- * If you're using Verticles
  *
  * NOTE: Most applications will only need a single Vert.x instance, but it's possible to create multiple Vert.x instances if you
  * require, for example, isolation between the event bus or different groups of servers and clients.
@@ -293,34 +289,130 @@
  *
  * A worker verticle is always executed with a thread from the worker pool.
  *
+ * By default blocking code is executed on the Vert.x worker pool, configured with {@link io.vertx.core.VertxOptions#setWorkerPoolSize(int)}.
+ *
+ * Additional pools can be created for different purposes:
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.CoreExamples#workerExecutor1}
+ * ----
+ *
+ * The worker executor must be closed when it's not necessary anymore:
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.CoreExamples#workerExecutor2}
+ * ----
+ *
+ * When several workers are created with the same name, they will share the same pool. The worker pool is destroyed
+ * when all the worker executors using it are closed.
+ *
+ * When an executor is created in a Verticle, Vert.x will close it automatically for you when the Verticle
+ * is undeployed.
+ *
+ * Worker executors can be configured when created:
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.CoreExamples#workerExecutor3}
+ * ----
+ *
+ * NOTE: the configuration is set when the worker pool is created
+ *
  * == Async coordination
  *
- * Coordination of multiple asynchronous results can be achieved with Vert.x {@link io.vertx.core.Future futures}.
+ * Coordination of multiple asynchronous results can be achieved with Vert.x {@link io.vertx.core.Future futures}. It
+ * supports concurrent composition (run several async operations in parallel) and sequential composition
+ * (chain async operations).
+ *
+ * === Concurrent composition
  *
  * {@link io.vertx.core.CompositeFuture#all} takes several futures arguments (up to 6) and returns a future that is
- * _succeeded_ when all the futures are and _failed_ otherwise:
+ * _succeeded_ when all the futures are and _failed_ when at least one of the futures is failed:
  *
  * [source,$lang]
  * ----
- * {@link examples.CoreExamples#exampleFuture1}
+ * {@link examples.CoreExamples#exampleFutureAll1}
  * ----
  *
- * The handler returned by {@link io.vertx.core.Future#completer()} completes the future.
+ * The operations run concurrently, the {@link io.vertx.core.Handler} attached to the returned future is invoked upon
+ * completion of the composition. When one of the operation fails (one of the passed future is marked as a failure),
+ * the resulting future is marked as failed too. When all the operations succeed, the resulting future is completed
+ * with a success.
  *
- * {@link io.vertx.core.CompositeFuture#any} takes several futures arguments (up to 6) and returns a future that is
- * _succeeded_ if one of the futures is, and _failed_ otherwise:
- *
- * [source,$lang]
- * ----
- * {@link examples.CoreExamples#exampleFuture2}
- * ----
- *
- * {@link io.vertx.core.Future#compose} can be used for chaining futures:
+ * Alternatively, you can pass a list (potentially empty) of futures:
  *
  * [source,$lang]
  * ----
- * {@link examples.CoreExamples#exampleFuture3}
+ * {@link examples.CoreExamples#exampleFutureAll2}
  * ----
+ *
+ * While the `all` composition _waits_ until all futures are successful (or one fails), the `any` composition
+ * _waits_ for the first succeeded future. {@link io.vertx.core.CompositeFuture#any} takes several futures
+ * arguments (up to 6) and returns a future that is succeeded when one of the futures is, and failed when
+ * all the futures are failed:
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.CoreExamples#exampleFutureAny1}
+ * ----
+ *
+ * A list of futures can be used also:
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.CoreExamples#exampleFutureAny2}
+ * ----
+ *
+ * The `join` composition _waits_ until all futures are completed, either with a success or a failure.
+ * {@link io.vertx.core.CompositeFuture#join} takes several futures arguments (up to 6) and returns a future that is
+ * succeeded when all the futures are succeeded, and failed when all the futures are completed and at least one of
+ * them is failed:
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.CoreExamples#exampleFutureJoin1}
+ * ----
+ *
+ * A list of futures can be used also:
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.CoreExamples#exampleFutureJoin2}
+ * ----
+ *
+ * === Sequential composition
+ *
+ * While `all` and `any` are implementing concurrent composition, {@link io.vertx.core.Future#compose} can be used
+ * for chaining futures (so sequential composition).
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.CoreExamples#exampleFuture6}
+ * ----
+ *
+ * In this example, 3 operations are chained:
+ *
+ * 1. a file is created (`fut1`)
+ * 2. something is written in the file (`fut2`)
+ * 3. the file is moved (`startFuture`)
+ *
+ * When these 3 steps are successful, the final future (`startFuture`) is succeeded. However, if one
+ * of the steps fails, the final future is failed.
+ *
+ * This example uses:
+ *
+ * * {@link io.vertx.core.Future#compose(java.util.function.Function)}: when the current future completes,
+ * run the given function, that returns a future. When this returned future completes, it completes the composition.
+ * * {@link io.vertx.core.Future#compose(io.vertx.core.Handler, io.vertx.core.Future)}: when the current future
+ * completes, run the given handler that completes the given `future` (next).
+ *
+ * In this second case, the {@link io.vertx.core.Handler} should complete the `next` future to report its success or
+ * failure.
+ *
+ * You can use {@link io.vertx.core.Future#completer()} that completes a future with the operation result or
+ * failure. It avoids having to write the _traditional_: `if success then complete the future else fail the future`.
  *
  * == Verticles
  *
@@ -366,15 +458,15 @@
  * This means we can guarantee that all the code in your verticle instance is always executed on the same event loop (as
  * long as you don't create your own threads and call it!).
  *
- * This means you can write all the code in your application as single threaded and let Vert.x worrying about the threading
+ * This means you can write all the code in your application as single threaded and let Vert.x worry about the threading
  * and scaling. No more worrying about +synchronized+ and +volatile+ any more, and you also avoid many other cases of race conditions
  * and deadlock so prevalent when doing hand-rolled 'traditional' multi-threaded application development.
  *
  * [[worker_verticles]]
  * === Worker verticles
  *
- * A worker verticle is just like a standard verticle but it's executed not using an event loop, but using a thread from
- * the Vert.x worker thread pool.
+ * A worker verticle is just like a standard verticle but it's executed using a thread from the Vert.x worker thread pool,
+ * rather than using an event loop.
  *
  * Worker verticles are designed for calling blocking code, as they won't block any event loops.
  *
@@ -492,14 +584,14 @@
  * ----
  *
  * This is useful for scaling easily across multiple cores. For example you might have a web-server verticle to deploy
- * and multiple cores on your machine, so you want to deploy multiple instances to take utilise all the cores.
+ * and multiple cores on your machine, so you want to deploy multiple instances to utilise all the cores.
  *
  * include::override/verticle-configuration.adoc[]
  *
  * === Verticle Isolation Groups
  *
  * By default, Vert.x has a _flat classpath_. I.e, when Vert.x deploys verticles it does so with the current classloader -
- * it doesn't create a new one. In the majority of cases this is the simplest, clearest and sanest thing to do.
+ * it doesn't create a new one. In the majority of cases this is the simplest, clearest, and sanest thing to do.
  *
  * However, in some cases you may want to deploy a verticle so the classes of that verticle are isolated from others in
  * your application.
@@ -669,10 +761,10 @@
  *
  * Keep in mind that the timer will fire on a periodic basis. If your periodic treatment takes a long amount of time to proceed,
  * your timer events could run continuously or even worse : stack up.
- * 
+ *
  * In this case, you should consider using {@link io.vertx.core.Vertx#setTimer} instead. Once your treatment has
  * finished, you can set the next timer.
- * 
+ *
  * [source,$lang]
  * ----
  * {@link examples.CoreExamples#example16}
@@ -691,6 +783,18 @@
  *
  * If you're creating timers from inside verticles, those timers will be automatically closed
  * when the verticle is undeployed.
+ *
+ * === Verticle worker pool
+ *
+ * Verticles use the Vert.x worker pool for executing blocking actions, i.e {@link io.vertx.core.Context#executeBlocking} or
+ * worker verticle.
+ *
+ * A different worker pool can be specified in deployment options:
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.CoreExamples#deployVerticleWithDifferentWorkerPool}
+ * ----
  *
  * [[event_bus]]
  * include::eventbus.adoc[]
@@ -734,6 +838,9 @@
  * to the classpath. The metrics SPI is an advanced feature which allows implementers to capture events from Vert.x in
  * order to gather metrics. For more information on this, please consult the
  * {@link io.vertx.core.spi.metrics.VertxMetrics API Documentation}.
+ *
+ * You can also specify a metrics factory programmatically if embedding Vert.x using
+ * {@link io.vertx.core.metrics.MetricsOptions#setFactory(io.vertx.core.spi.VertxMetricsFactory)}.
  *
  * == OSGi
  *
@@ -908,7 +1015,7 @@
  *
  * [source]
  * ----
- * vertx -ha
+ * vertx bare
  * ----
  *
  * Depending on your cluster configuration, you may have to append the `cluster-host` and `cluster-port` parameters.
@@ -1027,14 +1134,15 @@
  *
  * The redeployment process is implemented as follows. First your application is launched as a background application
  * (with the `start` command). On matching file changes, the process is stopped and the application is restarted.
- * This way avoids leaks.
+ * This avoids leaks, as the process is restarted.
  *
  * To enable the live redeploy, pass the `--redeploy` option to the `run` command. The `--redeploy` indicates the
  * set of file to _watch_. This set can use Ant-style patterns (with `\**`, `*` and `?`). You can specify
  * several sets by separating them using a comma (`,`). Patterns are relative to the current working directory.
  *
  * Parameters passed to the `run` command are passed to the application. Java Virtual Machine options can be
- * configured using `--java-opts`.
+ * configured using `--java-opts`. For instance, to pass the the `conf` parameter or a system property, you need to
+ * use: `--java-opts="-conf=my-conf.json -Dkey=value"`
  *
  * The `--launcher-class` option determine with with _main_ class the application is launcher. It's generally
  * {@link io.vertx.core.Launcher}, but you have use you own _main_.
@@ -1051,7 +1159,7 @@
  * the module explicitly (_Build_ menu -> _Make project_).
  *
  * To debug your application, create your run configuration as a remote application and configure the debugger
- * using `--java-opts`. However, don’t forget to re-plug the debugger after every redeployment as a new process is
+ * using `--java-opts`. However, don't forget to re-plug the debugger after every redeployment as a new process is
  * created every time.
  *
  * You can also hook your build process in the redeploy cycle:
@@ -1064,7 +1172,14 @@
  *
  * The "on-redeploy" option specifies a command invoked after the shutdown of the application and before the
  * restart. So you can hook your build tool if it updates some runtime artifacts. For instance, you can launch `gulp`
- * or `grunt` to update your resources.
+ * or `grunt` to update your resources. Don't forget that passing parameters to your application requires the
+ * `--java-opts` param:
+ *
+ * [source]
+ * ----
+ * java -jar target/my-fat-jar.jar --redeploy="**&#47;*.java" --on-redeploy="mvn package" --java-opts="-Dkey=val"
+ * java -jar build/libs/my-fat-jar.jar --redeploy="src&#47;**&#47;*.java" --on-redeploy='./gradlew shadowJar' --java-opts="-Dkey=val"
+ * ----
  *
  * The redeploy feature also supports the following settings:
  *
@@ -1123,10 +1238,14 @@
  * Log4J or SLF4J.
  *
  * To do this you should set a system property called `vertx.logger-delegate-factory-class-name` with the name of a Java
- * class which implements the interface {@link io.vertx.core.spi.logging.LogDelegateFactory}. We provide pre-built implementations for
- * Log4J and SLF4J with the class names `io.vertx.core.logging.Log4jLogDelegateFactory` and `io.vertx.core.logging.SLF4JLogDelegateFactory`
- * respectively. If you want to use these implementations you should also make sure the relevant Log4J or SLF4J jars
- * are on your classpath.
+ * class which implements the interface {@link io.vertx.core.spi.logging.LogDelegateFactory}. We provide pre-built
+ * implementations for Log4J (version 1), Log4J 2 and SLF4J with the class names
+ * `io.vertx.core.logging.Log4jLogDelegateFactory`, `io.vertx.core.logging.Log4j2LogDelegateFactory` and
+ * `io.vertx.core.logging.SLF4JLogDelegateFactory` respectively. If you want to use these implementations you should
+ * also make sure the relevant Log4J or SLF4J jars are on your classpath.
+ *
+ * Notice that, the provided delegate for Log4J 1 does not support parameterized message. The delegate for Log4J 2
+ * uses the `{}` syntax like the SLF4J delegate. JUL delegate uses the `{x}` syntax.
  *
  * === Logging from your application
  *
@@ -1144,12 +1263,65 @@
  * {@link examples.CoreExamples#example18}
  * ----
  *
- * == Hostname resolution
+ * CAUTION: Logging backends use different formats to represent replaceable tokens in parameterized messages.
+ * As a consequence, if you rely on Vert.x parameterized logging methods, you won't be able to switch backends without changing your code.
  *
- * Vert.x uses an an hostname resolver for resolving hostname into IP addresses instead of
+ * [[netty-logging]]
+ * === Netty logging
+ *
+ * When configuring logging, you should care about configuring Netty logging as well.
+ *
+ * Netty does not rely on external logging configuration (e.g system properties) and instead implements a logging
+ * configuration based on the logging libraries visible from the Netty classes:
+ *
+ * - use `SLF4J` library if it is visible
+ * - otherwise use `Log4j` if it is visible
+ * - otherwise fallback `java.util.logging`
+ *
+ * The logger implementation can be forced to a specific implementation by setting Netty's internal logger implementation directly
+ * on `io.netty.util.internal.logging.InternalLoggerFactory`:
+ *
+ * [source,java]
+ * ----
+ * // Force logging to Log4j
+ * InternalLoggerFactory.setDefaultFactory(Log4JLoggerFactory.INSTANCE);
+ * ----
+ *
+ * === Troubleshooting
+ *
+ * ==== SLF4J warning at startup
+ *
+ * If, when you start your application, you see the following message:
+ *
+ * ----
+ * SLF4J: Failed to load class "org.slf4j.impl.StaticLoggerBinder".
+ * SLF4J: Defaulting to no-operation (NOP) logger implementation
+ * SLF4J: See http://www.slf4j.org/codes.html#StaticLoggerBinder for further details.
+ * ----
+ *
+ * It means that you have SLF4J-API in your classpath but no actual binding. Messages logged with SLF4J will be dropped.
+ * You should add a binding to your classpath. Check https://www.slf4j.org/manual.html#swapping to pick a binding and configure it.
+ *
+ * Be aware that Netty looks for the SLF4-API jar and uses it by default.
+ *
+ * ==== Connection reset by peer
+ *
+ * If your logs show a bunch of:
+ *
+ * ----
+ * io.vertx.core.net.impl.ConnectionBase
+ * SEVERE: java.io.IOException: Connection reset by peer
+ * ----
+ *
+ * It means that the client is resetting the HTTP connection instead of closing it. This message also indicates that you
+ * may have not consumed the complete payload (the connection was cut before you were able to).
+ *
+ * == Host name resolution
+ *
+ * Vert.x uses an an address resolver for resolving host name into IP addresses instead of
  * the JVM built-in blocking resolver.
  *
- * An hostname are resolve to an IP address using:
+ * An host name resolves to an IP address using:
  *
  * - the _hosts_ file of the operating system
  * - otherwise DNS queries against a list of servers
@@ -1166,6 +1338,51 @@
  *
  * The default port of a DNS server is `53`, when a server uses a different port, this port can be set
  * using a colon delimiter: `192.168.0.2:40000`.
+ *
+ * NOTE: sometimes it can be desirable to use the JVM built-in resolver, the JVM system property
+ * _-Dvertx.disableDnsResolver=true_ activates this behavior
+ *
+ * === Failover
+ *
+ * When a server does not reply in a timely manner, the resolver will try the next one from the list, the search
+ * is limited by {@link io.vertx.core.dns.AddressResolverOptions#setMaxQueries(int)} (the default value is `4` queries).
+ *
+ * A DNS query is considered as failed when the resolver has not received a correct answer within
+ * {@link io.vertx.core.dns.AddressResolverOptions#getQueryTimeout()} milliseconds (the default value is `5` seconds).
+ *
+ * === Server list rotation
+ *
+ * By default the dns server selection uses the first one, the remaining servers are used for failover.
+ *
+ * You can configure {@link io.vertx.core.dns.AddressResolverOptions#setRotateServers(boolean)} to `true` to let
+ * the resolver perform a round-robin selection instead. It spreads the query load among the servers and avoids
+ * all lookup to hit the first server of the list.
+ *
+ * Failover still applies and will use the next server in the list.
+ *
+ * === Hosts mapping
+ *
+ * The _hosts_ file of the operating system is used to perform an hostname lookup for an ipaddress.
+ *
+ * An alternative _hosts_ file can be used instead:
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.CoreExamples#configureHosts}
+ * ----
+ *
+ * === Search domains
+ *
+ * By default the resolver will use the system DNS search domains from the environment. Alternatively an explicit search domain
+ * list can be provided:
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.CoreExamples#configureSearchDomains()}
+ * ----
+ *
+ * When a search domain list is used, the threshold for the number of dots is {@code 1} or loaded from `/etc/resolv.conf`
+ * on Linux, it can be configured to a specific value with {@link io.vertx.core.dns.AddressResolverOptions#setNdots(int)}.
  *
  * == High Availability and Fail-Over
  *
@@ -1227,7 +1444,7 @@
  *
  * [source]
  * ----
- * vertx run my-verticle.js -ha -ha-group my-group
+ * vertx run my-verticle.js -ha -hagroup my-group
  * ----
  *
  * Let's look at an example:
@@ -1307,6 +1524,87 @@
  *
  * Quora can also be used in conjunction with ha groups. In that case, quora are resolved for each particular
  * group.
+ *
+ * == Native transports
+ *
+ * Vert.x can run with http://netty.io/wiki/native-transports.html[native transports] (when available) on BSD (OSX) and Linux:
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.CoreExamples#configureNative()}
+ * ----
+ *
+ * NOTE: preferring native transport will not prevent the application to execute, if your application requires native
+ * transport, you need to check {@link io.vertx.core.Vertx#isNativeTransportEnabled()}.
+ *
+ * === Native Linux Transport
+ *
+ * You need to add the following dependency in your classpath:
+ *
+ * [source,xml]
+ * ----
+ * <dependency>
+ *   <groupId>io.netty</groupId>
+ *   <artifactId>netty-transport-native-epoll</artifactId>
+ *   <version>4.1.15.Final</version>
+ *   <classifier>linux-x86_64</classifier>
+ * </dependency>
+ * ----
+ *
+ * Native on Linux gives you extra networking options:
+ *
+ * * SO_REUSEPORT
+ * * TCP_QUICKACK
+ * * TCP_CORK
+ * * TCP_FASTOPEN
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.CoreExamples#configureLinuxOptions}
+ * ----
+ *
+ * === Native BSD Transport
+ *
+ * You need to add the following dependency in your classpath:
+ *
+ * [source,xml]
+ * ----
+ * <dependency>
+ *   <groupId>io.netty</groupId>
+ *   <artifactId>netty-transport-native-epoll</artifactId>
+ *   <version>4.1.15.Final</version>
+ *   <classifier>osx-x86_64</classifier>
+ * </dependency>
+ * ----
+ *
+ * MacOS Sierra and above are supported.
+ *
+ * Native on BSD gives you extra networking options:
+ *
+ * * SO_REUSEPORT
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.CoreExamples#configureBSDOptions}
+ * ----
+ *
+ * === Domain sockets
+ *
+ * Natives provide support domain sockets for `NetServer`:
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.CoreExamples#serverWithDomainSockets}
+ * ----
+ *
+ * As well as `NetClient`:
+ *
+ * [source,$lang]
+ * ----
+ * {@link examples.CoreExamples#clientWithDomainSockets}
+ * ----
+ *
+ * NOTE: support for `HttpServer` and `HttpClient` can be expected in later versions of Vert.x
  *
  * == Security notes
  *
@@ -1428,6 +1726,50 @@
  * {@link io.vertx.core.impl.launcher.VertxCommandLauncher#getDefaultCommand()}
  * * add / remove commands using {@link io.vertx.core.impl.launcher.VertxCommandLauncher#register(java.lang.Class)}
  * and {@link io.vertx.core.impl.launcher.VertxCommandLauncher#unregister(java.lang.String)}
+ *
+ * === Launcher and exit code
+ *
+ * When you use the {@link io.vertx.core.Launcher} class as main class, it uses the following exit code:
+ *
+ * * {@code 0} if the process ends smoothly, or if an uncaught error is thrown
+ * * {@code 1} for general purpose error
+ * * {@code 11} if Vert.x cannot be initialized
+ * * {@code 12} if a spawn process cannot be started, found or stopped. This error code is used by the `start` and
+ * `stop` command
+ * * {@code 14} if the system configuration is not meeting the system requirement (shc as java not found)
+ * * {@code 15} if the main verticle cannot be deployed
+ *
+ * == Configuring Vert.x cache
+ *
+ * When Vert.x needs to read a file from the classpath (embedded in a fat jar, in a jar form the classpath or a file
+ * that is on the classpath), it copies it to a cache directory. The reason behind this is simple: reading a file
+ * from a jar or from an input stream is blocking. So to avoid to pay the price every time, Vert.x copies the file to
+ * its cache directory and reads it from there every subsequent read. This behavior can be configured.
+ *
+ * First, by default, Vert.x uses `$CWD/.vertx` as cache directory. It creates a unique directory inside this one to
+ * avoid conflicts. This location can be configured by using the `vertx.cacheDirBase` system property. For instance
+ * if the current working directory is not writable (such as in an immutable container context), launch your
+ * application with:
+ *
+ * [source]
+ * ----
+ * vertx run my.Verticle -Dvertx.cacheDirBase=/tmp/vertx-cache
+ * # or
+ * java -jar my-fat.jar vertx.cacheDirBase=/tmp/vertx-cache
+ * ----
+ *
+ * IMPORTANT: the directory must be **writable**.
+ *
+ * When you are editing resources such as HTML, CSS or JavaScript, this cache mechanism can be annoying as it serves
+ * only the first version of the file (and so you won't see your edits if you reload your page). To avoid this
+ * behavior, launch your application with `-Dvertx.disableFileCaching=true`. With this setting, Vert.x still uses
+ * the cache, but always refresh the version stored in the cache with the original source. So if you edit a file
+ * served from the classpath and refresh your browser, Vert.x reads it from the classpath, copies it to the cache
+ * directory and serves it from there. Do not use this setting in production, it can kill your performances.
+ *
+ * Finally, you can disable completely the cache by using `-Dvertx.disableFileCPResolving=true`. This setting is not
+ * without consequences. Vert.x would be unable to read any files from the classpath (only from the file system). Be
+ * very careful when using this settings.
  *
  */
 @Document(fileName = "index.adoc")

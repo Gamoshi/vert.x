@@ -1,17 +1,12 @@
 /*
- * Copyright (c) 2011-2013 The original author or authors
- *  ------------------------------------------------------
- *  All rights reserved. This program and the accompanying materials
- *  are made available under the terms of the Eclipse Public License v1.0
- *  and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *      The Eclipse Public License is available at
- *      http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *      The Apache License v2.0 is available at
- *      http://www.opensource.org/licenses/apache2.0.php
- *
- *  You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.test.codegen;
@@ -22,9 +17,7 @@ import io.vertx.core.http.HttpMethod;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * @author <a href="mailto:julien@julienviet.com">Julien Viet</a>
@@ -71,6 +64,22 @@ public class TestDataObject {
   private List<HttpMethod> httpMethods;
   private List<Object> objects;
 
+  private Set<String> stringSet;
+  private Set<Boolean> boxedBooleanSet;
+  private Set<Byte> boxedByteSet;
+  private Set<Short> boxedShortSet;
+  private Set<Integer> boxedIntSet;
+  private Set<Long> boxedLongSet;
+  private Set<Float> boxedFloatSet;
+  private Set<Double> boxedDoubleSet;
+  private Set<Character> boxedCharSet;
+  private Set<AggregatedDataObject> aggregatedDataObjectSet;
+  private Set<Buffer> bufferSet;
+  private Set<JsonObject> jsonObjectSet;
+  private Set<JsonArray> jsonArraySet;
+  private Set<HttpMethod> httpMethodSet;
+  private Set<Object> objectSet;
+
   private List<String> addedStringValues = new ArrayList<>();
   private List<Boolean> addedBoxedBooleanValues = new ArrayList<>();
   private List<Byte> addedBoxedByteValues = new ArrayList<>();
@@ -102,6 +111,22 @@ public class TestDataObject {
   private Map<String, JsonArray> jsonArrayMap;
   private Map<String, HttpMethod> httpMethodMap;
   private Map<String, Object> objectMap;
+
+  private Map<String, String> keyedStringValues = new HashMap<>();
+  private Map<String, Boolean> keyedBoxedBooleanValues = new HashMap<>();
+  private Map<String, Byte> keyedBoxedByteValues = new HashMap<>();
+  private Map<String, Short> keyedBoxedShortValues = new HashMap<>();
+  private Map<String, Integer> keyedBoxedIntValues = new HashMap<>();
+  private Map<String, Long> keyedBoxedLongValues = new HashMap<>();
+  private Map<String, Float> keyedBoxedFloatValues = new HashMap<>();
+  private Map<String, Double> keyedBoxedDoubleValues = new HashMap<>();
+  private Map<String, Character> keyedBoxedCharValues = new HashMap<>();
+  private Map<String, AggregatedDataObject> keyedDataObjectValues = new HashMap<>();
+  private Map<String, Buffer> keyedBufferValues = new HashMap<>();
+  private Map<String, JsonObject> keyedJsonObjectValues = new HashMap<>();
+  private Map<String, JsonArray> keyedJsonArrayValues = new HashMap<>();
+  private Map<String, HttpMethod> keyedEnumValues = new HashMap<>();
+  private Map<String, Object> keyedObjectValues = new HashMap<>();
 
   public TestDataObject() {
   }
@@ -445,6 +470,142 @@ public class TestDataObject {
     return this;
   }
 
+
+  public Set<String> getStringSet() {
+    return stringSet;
+  }
+
+  public TestDataObject setStringSet(Set<String> stringSet) {
+    this.stringSet = stringSet;
+    return this;
+  }
+
+  public Set<Boolean> getBoxedBooleanSet() {
+    return boxedBooleanSet;
+  }
+
+  public TestDataObject setBoxedBooleanSet(Set<Boolean> boxedBooleanSet) {
+    this.boxedBooleanSet = boxedBooleanSet;
+    return this;
+  }
+
+  public Set<Byte> getBoxedByteSet() {
+    return boxedByteSet;
+  }
+
+  public TestDataObject setBoxedByteSet(Set<Byte> boxedByteSet) {
+    this.boxedByteSet = boxedByteSet;
+    return this;
+  }
+
+  public Set<Short> getBoxedShortSet() {
+    return boxedShortSet;
+  }
+
+  public TestDataObject setBoxedShortSet(Set<Short> boxedShortSet) {
+    this.boxedShortSet = boxedShortSet;
+    return this;
+  }
+
+  public Set<Integer> getBoxedIntSet() {
+    return boxedIntSet;
+  }
+
+  public TestDataObject setBoxedIntSet(Set<Integer> boxedIntSet) {
+    this.boxedIntSet = boxedIntSet;
+    return this;
+  }
+
+  public Set<Long> getBoxedLongSet() {
+    return boxedLongSet;
+  }
+
+  public TestDataObject setBoxedLongSet(Set<Long> boxedLongSet) {
+    this.boxedLongSet = boxedLongSet;
+    return this;
+  }
+
+  public Set<Float> getBoxedFloatSet() {
+    return boxedFloatSet;
+  }
+
+  public TestDataObject setBoxedFloatSet(Set<Float> boxedFloatSet) {
+    this.boxedFloatSet = boxedFloatSet;
+    return this;
+  }
+
+  public Set<Double> getBoxedDoubleSet() {
+    return boxedDoubleSet;
+  }
+
+  public TestDataObject setBoxedDoubleSet(Set<Double> boxedDoubleSet) {
+    this.boxedDoubleSet = boxedDoubleSet;
+    return this;
+  }
+
+  public Set<Character> getBoxedCharSet() {
+    return boxedCharSet;
+  }
+
+  public TestDataObject setBoxedCharSet(Set<Character> boxedCharSet) {
+    this.boxedCharSet = boxedCharSet;
+    return this;
+  }
+
+  public Set<AggregatedDataObject> getAggregatedDataObjectSet() {
+    return aggregatedDataObjectSet;
+  }
+
+  public TestDataObject setAggregatedDataObjectSet(Set<AggregatedDataObject> aggregatedDataObjectSet) {
+    this.aggregatedDataObjectSet = aggregatedDataObjectSet;
+    return this;
+  }
+
+  public Set<Buffer> getBufferSet() {
+    return bufferSet;
+  }
+
+  public TestDataObject setBufferSet(Set<Buffer> bufferSet) {
+    this.bufferSet = bufferSet;
+    return this;
+  }
+
+  public Set<JsonObject> getJsonObjectSet() {
+    return jsonObjectSet;
+  }
+
+  public TestDataObject setJsonObjectSet(Set<JsonObject> jsonObjectSet) {
+    this.jsonObjectSet = jsonObjectSet;
+    return this;
+  }
+
+  public Set<JsonArray> getJsonArraySet() {
+    return jsonArraySet;
+  }
+
+  public TestDataObject setJsonArraySet(Set<JsonArray> jsonArraySet) {
+    this.jsonArraySet = jsonArraySet;
+    return this;
+  }
+
+  public Set<HttpMethod> getHttpMethodSet() {
+    return httpMethodSet;
+  }
+
+  public TestDataObject setHttpMethodSet(Set<HttpMethod> httpMethodSet) {
+    this.httpMethodSet = httpMethodSet;
+    return this;
+  }
+
+  public Set<Object> getObjectSet() {
+    return objectSet;
+  }
+
+  public TestDataObject setObjectSet(Set<Object> objectSet) {
+    this.objectSet = objectSet;
+    return this;
+  }
+
   public List<String> getAddedStringValues() {
     return addedStringValues;
   }
@@ -712,6 +873,141 @@ public class TestDataObject {
 
   public TestDataObject setObjectMap(Map<String, Object> objectMap) {
     this.objectMap = objectMap;
+    return this;
+  }
+
+  public Map<String, String> getKeyedStringValues() {
+    return keyedStringValues;
+  }
+
+  public TestDataObject addKeyedStringValue(String name, String value) {
+    this.keyedStringValues.put(name, value);
+    return this;
+  }
+
+  public Map<String, Boolean> getKeyedBoxedBooleanValues() {
+    return keyedBoxedBooleanValues;
+  }
+
+  public TestDataObject addKeyedBoxedBooleanValue(String key, Boolean value) {
+    keyedBoxedBooleanValues.put(key, value);
+    return this;
+  }
+
+  public Map<String, Byte> getKeyedBoxedByteValues() {
+    return keyedBoxedByteValues;
+  }
+
+  public TestDataObject addKeyedBoxedByteValue(String key, Byte value) {
+    keyedBoxedByteValues.put(key, value);
+    return this;
+  }
+
+  public Map<String, Short> getKeyedBoxedShortValues() {
+    return keyedBoxedShortValues;
+  }
+
+  public TestDataObject addKeyedBoxedShortValue(String key, Short value) {
+    keyedBoxedShortValues.put(key, value);
+    return this;
+  }
+
+  public Map<String, Integer> getKeyedBoxedIntValues() {
+    return keyedBoxedIntValues;
+  }
+
+  public TestDataObject addKeyedBoxedIntValue(String key, Integer value) {
+    keyedBoxedIntValues.put(key, value);
+    return this;
+  }
+
+  public Map<String, Long> getKeyedBoxedLongValues() {
+    return keyedBoxedLongValues;
+  }
+
+  public TestDataObject addKeyedBoxedLongValue(String key, Long value) {
+    keyedBoxedLongValues.put(key, value);
+    return this;
+  }
+
+  public Map<String, Float> getKeyedBoxedFloatValues() {
+    return keyedBoxedFloatValues;
+  }
+
+  public TestDataObject addKeyedBoxedFloatValue(String key, Float value) {
+    keyedBoxedFloatValues.put(key, value);
+    return this;
+  }
+
+  public Map<String, Double> getKeyedBoxedDoubleValues() {
+    return keyedBoxedDoubleValues;
+  }
+
+  public TestDataObject addKeyedBoxedDoubleValue(String key, Double value) {
+    keyedBoxedDoubleValues.put(key, value);
+    return this;
+  }
+
+  public Map<String, Character> getKeyedBoxedCharValues() {
+    return keyedBoxedCharValues;
+  }
+
+  public TestDataObject addKeyedBoxedCharValue(String key, Character value) {
+    keyedBoxedCharValues.put(key, value);
+    return this;
+  }
+
+  public Map<String, AggregatedDataObject> getKeyedDataObjectValues() {
+    return keyedDataObjectValues;
+  }
+
+  public TestDataObject addKeyedDataObjectValue(String key, AggregatedDataObject value) {
+    keyedDataObjectValues.put(key, value);
+    return this;
+  }
+
+  public Map<String, Buffer> getKeyedBufferValues() {
+    return keyedBufferValues;
+  }
+
+  public TestDataObject addKeyedBufferValue(String key, Buffer value) {
+    keyedBufferValues.put(key, value);
+    return this;
+  }
+
+  public Map<String, JsonObject> getKeyedJsonObjectValues() {
+    return keyedJsonObjectValues;
+  }
+
+  public TestDataObject addKeyedJsonObjectValue(String key, JsonObject value) {
+    keyedJsonObjectValues.put(key, value);
+    return this;
+  }
+
+  public Map<String, JsonArray> getKeyedJsonArrayValues() {
+    return keyedJsonArrayValues;
+  }
+
+  public TestDataObject addKeyedJsonArrayValue(String key, JsonArray value) {
+    keyedJsonArrayValues.put(key, value);
+    return this;
+  }
+
+  public Map<String, HttpMethod> getKeyedEnumValues() {
+    return keyedEnumValues;
+  }
+
+  public TestDataObject addKeyedEnumValue(String key, HttpMethod value) {
+    keyedEnumValues.put(key, value);
+    return this;
+  }
+
+  public Map<String, Object> getKeyedObjectValues() {
+    return keyedObjectValues;
+  }
+
+  public TestDataObject addKeyedObjectValue(String key, Object value) {
+    keyedObjectValues.put(key, value);
     return this;
   }
 }

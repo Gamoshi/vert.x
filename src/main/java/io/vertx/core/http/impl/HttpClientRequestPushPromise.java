@@ -1,17 +1,12 @@
 /*
- * Copyright (c) 2011-2013 The original author or authors
- *  ------------------------------------------------------
- *  All rights reserved. This program and the accompanying materials
- *  are made available under the terms of the Eclipse Public License v1.0
- *  and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *      The Eclipse Public License is available at
- *      http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *      The Apache License v2.0 is available at
- *      http://www.opensource.org/licenses/apache2.0.php
- *
- *  You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.core.http.impl;
@@ -35,9 +30,7 @@ class HttpClientRequestPushPromise extends HttpClientRequestBase {
 
   private final Http2ClientConnection conn;
   private final Http2ClientConnection.Http2ClientStream stream;
-  private final HttpMethod method;
-  private final String uri;
-  private final String host;
+  private final String rawMethod;
   private final MultiMap headers;
   private Handler<HttpClientResponse> respHandler;
 
@@ -45,16 +38,17 @@ class HttpClientRequestPushPromise extends HttpClientRequestBase {
       Http2ClientConnection conn,
       Http2Stream stream,
       HttpClientImpl client,
+      boolean ssl,
       HttpMethod method,
+      String rawMethod,
       String uri,
       String host,
+      int port,
       MultiMap headers) throws Http2Exception {
-    super(client, method, host, uri);
+    super(client, ssl, method, host, port, uri);
     this.conn = conn;
-    this.stream = new Http2ClientConnection.Http2ClientStream(conn, this, stream);
-    this.method = method;
-    this.uri = uri;
-    this.host = host;
+    this.stream = new Http2ClientConnection.Http2ClientStream(conn, this, stream, false);
+    this.rawMethod = rawMethod;
     this.headers = headers;
   }
 
@@ -68,7 +62,7 @@ class HttpClientRequestPushPromise extends HttpClientRequestBase {
   }
 
   @Override
-  protected void doHandleResponse(HttpClientResponseImpl resp) {
+  protected void doHandleResponse(HttpClientResponseImpl resp, long timeoutMs) {
     synchronized (getLock()) {
       if (respHandler != null) {
         respHandler.handle(resp);
@@ -99,9 +93,10 @@ class HttpClientRequestPushPromise extends HttpClientRequestBase {
   }
 
   @Override
-  public void reset(long code) {
+  public boolean reset(long code) {
     synchronized (conn) {
       stream.reset(code);
+      return true;
     }
   }
 
@@ -113,6 +108,16 @@ class HttpClientRequestPushPromise extends HttpClientRequestBase {
   @Override
   public HttpMethod method() {
     return method;
+  }
+
+  @Override
+  public String getRawMethod() {
+    return rawMethod;
+  }
+
+  @Override
+  public HttpClientRequest setRawMethod(String method) {
+    throw new IllegalStateException();
   }
 
   @Override
@@ -157,6 +162,11 @@ class HttpClientRequestPushPromise extends HttpClientRequestBase {
 
   @Override
   public HttpClientRequest endHandler(Handler<Void> endHandler) {
+    throw new IllegalStateException();
+  }
+
+  @Override
+  public HttpClientRequest setFollowRedirects(boolean followRedirect) {
     throw new IllegalStateException();
   }
 
@@ -246,7 +256,7 @@ class HttpClientRequestPushPromise extends HttpClientRequestBase {
   }
 
   @Override
-  public HttpClientRequest writeFrame(int type, int flags, Buffer payload) {
+  public HttpClientRequest writeCustomFrame(int type, int flags, Buffer payload) {
     throw new UnsupportedOperationException("Cannot write frame with HTTP/1.x ");
   }
 }

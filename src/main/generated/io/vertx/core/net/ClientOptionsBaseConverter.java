@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 Red Hat, Inc.
+ * Copyright (c) 2014 Red Hat, Inc. and others
  *
  * Red Hat licenses this file to you under the Apache License, version 2.0
  * (the "License"); you may not use this file except in compliance with the
@@ -24,19 +24,37 @@ import io.vertx.core.json.JsonArray;
  *
  * NOTE: This class has been automatically generated from the {@link io.vertx.core.net.ClientOptionsBase} original class using Vert.x codegen.
  */
-public class ClientOptionsBaseConverter {
+ class ClientOptionsBaseConverter {
 
-  public static void fromJson(JsonObject json, ClientOptionsBase obj) {
+   static void fromJson(JsonObject json, ClientOptionsBase obj) {
     if (json.getValue("connectTimeout") instanceof Number) {
       obj.setConnectTimeout(((Number)json.getValue("connectTimeout")).intValue());
+    }
+    if (json.getValue("localAddress") instanceof String) {
+      obj.setLocalAddress((String)json.getValue("localAddress"));
+    }
+    if (json.getValue("metricsName") instanceof String) {
+      obj.setMetricsName((String)json.getValue("metricsName"));
+    }
+    if (json.getValue("proxyOptions") instanceof JsonObject) {
+      obj.setProxyOptions(new io.vertx.core.net.ProxyOptions((JsonObject)json.getValue("proxyOptions")));
     }
     if (json.getValue("trustAll") instanceof Boolean) {
       obj.setTrustAll((Boolean)json.getValue("trustAll"));
     }
   }
 
-  public static void toJson(ClientOptionsBase obj, JsonObject json) {
+   static void toJson(ClientOptionsBase obj, JsonObject json) {
     json.put("connectTimeout", obj.getConnectTimeout());
+    if (obj.getLocalAddress() != null) {
+      json.put("localAddress", obj.getLocalAddress());
+    }
+    if (obj.getMetricsName() != null) {
+      json.put("metricsName", obj.getMetricsName());
+    }
+    if (obj.getProxyOptions() != null) {
+      json.put("proxyOptions", obj.getProxyOptions().toJson());
+    }
     json.put("trustAll", obj.isTrustAll());
   }
 }

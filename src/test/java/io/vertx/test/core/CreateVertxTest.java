@@ -1,40 +1,36 @@
 /*
- * Copyright (c) 2011-2014 The original author or authors
- * ------------------------------------------------------
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *     The Eclipse Public License is available at
- *     http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *     The Apache License v2.0 is available at
- *     http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.test.core;
 
-import io.vertx.core.Vertx;
-import io.vertx.core.VertxOptions;
 import org.junit.Test;
+
+import io.vertx.core.*;
+import io.vertx.test.fakecluster.FakeClusterManager;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
-public class CreateVertxTest extends AsyncTestBase {
+public class CreateVertxTest extends VertxTestBase {
 
   @Test
   public void testCreateSimpleVertx() {
-    Vertx vertx = Vertx.vertx();
+    Vertx vertx = vertx();
     assertNotNull(vertx);
   }
 
   @Test
   public void testCreateVertxWithOptions() {
     VertxOptions options = new VertxOptions();
-    Vertx vertx = Vertx.vertx(options);
+    Vertx vertx = vertx(options);
     assertNotNull(vertx);
     assertFalse(vertx.isClustered());
   }
@@ -55,7 +51,7 @@ public class CreateVertxTest extends AsyncTestBase {
   public void testCreateClusteredVertxAsync() {
     VertxOptions options = new VertxOptions();
     options.setClustered(true);
-    Vertx.clusteredVertx(options, ar -> {
+    clusteredVertx(options, ar -> {
       assertTrue(ar.succeeded());
       assertNotNull(ar.result());
       assertTrue(ar.result().isClustered());
@@ -74,7 +70,7 @@ public class CreateVertxTest extends AsyncTestBase {
   @Test
   public void testCreateClusteredVertxAsyncDontSetClustered() {
     VertxOptions options = new VertxOptions();
-    Vertx.clusteredVertx(options, ar -> {
+    clusteredVertx(options, ar -> {
       assertTrue(ar.succeeded());
       assertNotNull(ar.result());
       assertTrue(options.isClustered());
@@ -88,4 +84,20 @@ public class CreateVertxTest extends AsyncTestBase {
     await();
   }
 
+
+  @Test
+  public void testCreateClusteredVertxAsyncDetectJoinFailure() {
+    VertxOptions options = new VertxOptions().setClusterManager(new FakeClusterManager(){
+      @Override
+      public void join(Handler<AsyncResult<Void>> resultHandler) {
+        resultHandler.handle(Future.failedFuture(new Exception("joinfailure")));
+      }
+    });
+    clusteredVertx(options, ar -> {
+      assertTrue(ar.failed());
+      assertEquals("joinfailure", ar.cause().getMessage());
+      testComplete();
+    });
+    await();
+  }
 }

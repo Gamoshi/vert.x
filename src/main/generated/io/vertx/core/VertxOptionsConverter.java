@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 Red Hat, Inc.
+ * Copyright (c) 2014 Red Hat, Inc. and others
  *
  * Red Hat licenses this file to you under the Apache License, version 2.0
  * (the "License"); you may not use this file except in compliance with the
@@ -24,9 +24,12 @@ import io.vertx.core.json.JsonArray;
  *
  * NOTE: This class has been automatically generated from the {@link io.vertx.core.VertxOptions} original class using Vert.x codegen.
  */
-public class VertxOptionsConverter {
+ class VertxOptionsConverter {
 
-  public static void fromJson(JsonObject json, VertxOptions obj) {
+   static void fromJson(JsonObject json, VertxOptions obj) {
+    if (json.getValue("addressResolverOptions") instanceof JsonObject) {
+      obj.setAddressResolverOptions(new io.vertx.core.dns.AddressResolverOptions((JsonObject)json.getValue("addressResolverOptions")));
+    }
     if (json.getValue("blockedThreadCheckInterval") instanceof Number) {
       obj.setBlockedThreadCheckInterval(((Number)json.getValue("blockedThreadCheckInterval")).longValue());
     }
@@ -57,14 +60,14 @@ public class VertxOptionsConverter {
     if (json.getValue("eventLoopPoolSize") instanceof Number) {
       obj.setEventLoopPoolSize(((Number)json.getValue("eventLoopPoolSize")).intValue());
     }
+    if (json.getValue("fileResolverCachingEnabled") instanceof Boolean) {
+      obj.setFileResolverCachingEnabled((Boolean)json.getValue("fileResolverCachingEnabled"));
+    }
     if (json.getValue("haEnabled") instanceof Boolean) {
       obj.setHAEnabled((Boolean)json.getValue("haEnabled"));
     }
     if (json.getValue("haGroup") instanceof String) {
       obj.setHAGroup((String)json.getValue("haGroup"));
-    }
-    if (json.getValue("hostnameResolverOptions") instanceof JsonObject) {
-      obj.setHostnameResolverOptions(new io.vertx.core.dns.HostnameResolverOptions((JsonObject)json.getValue("hostnameResolverOptions")));
     }
     if (json.getValue("internalBlockingPoolSize") instanceof Number) {
       obj.setInternalBlockingPoolSize(((Number)json.getValue("internalBlockingPoolSize")).intValue());
@@ -78,6 +81,9 @@ public class VertxOptionsConverter {
     if (json.getValue("metricsOptions") instanceof JsonObject) {
       obj.setMetricsOptions(new io.vertx.core.metrics.MetricsOptions((JsonObject)json.getValue("metricsOptions")));
     }
+    if (json.getValue("preferNativeTransport") instanceof Boolean) {
+      obj.setPreferNativeTransport((Boolean)json.getValue("preferNativeTransport"));
+    }
     if (json.getValue("quorumSize") instanceof Number) {
       obj.setQuorumSize(((Number)json.getValue("quorumSize")).intValue());
     }
@@ -89,7 +95,10 @@ public class VertxOptionsConverter {
     }
   }
 
-  public static void toJson(VertxOptions obj, JsonObject json) {
+   static void toJson(VertxOptions obj, JsonObject json) {
+    if (obj.getAddressResolverOptions() != null) {
+      json.put("addressResolverOptions", obj.getAddressResolverOptions().toJson());
+    }
     json.put("blockedThreadCheckInterval", obj.getBlockedThreadCheckInterval());
     if (obj.getClusterHost() != null) {
       json.put("clusterHost", obj.getClusterHost());
@@ -106,12 +115,10 @@ public class VertxOptionsConverter {
       json.put("eventBusOptions", obj.getEventBusOptions().toJson());
     }
     json.put("eventLoopPoolSize", obj.getEventLoopPoolSize());
+    json.put("fileResolverCachingEnabled", obj.isFileResolverCachingEnabled());
     json.put("haEnabled", obj.isHAEnabled());
     if (obj.getHAGroup() != null) {
       json.put("haGroup", obj.getHAGroup());
-    }
-    if (obj.getHostnameResolverOptions() != null) {
-      json.put("hostnameResolverOptions", obj.getHostnameResolverOptions().toJson());
     }
     json.put("internalBlockingPoolSize", obj.getInternalBlockingPoolSize());
     json.put("maxEventLoopExecuteTime", obj.getMaxEventLoopExecuteTime());
@@ -119,6 +126,7 @@ public class VertxOptionsConverter {
     if (obj.getMetricsOptions() != null) {
       json.put("metricsOptions", obj.getMetricsOptions().toJson());
     }
+    json.put("preferNativeTransport", obj.getPreferNativeTransport());
     json.put("quorumSize", obj.getQuorumSize());
     json.put("warningExceptionTime", obj.getWarningExceptionTime());
     json.put("workerPoolSize", obj.getWorkerPoolSize());

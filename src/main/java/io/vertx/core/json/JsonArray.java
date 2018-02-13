@@ -1,17 +1,12 @@
 /*
- * Copyright (c) 2011-2014 The original author or authors
- * ------------------------------------------------------
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *     The Eclipse Public License is available at
- *     http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *     The Apache License v2.0 is available at
- *     http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.core.json;
@@ -20,12 +15,7 @@ import io.vertx.core.buffer.Buffer;
 import io.vertx.core.shareddata.impl.ClusterSerializable;
 
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 import java.util.stream.Stream;
 
 import static java.time.format.DateTimeFormatter.ISO_INSTANT;
@@ -70,6 +60,15 @@ public class JsonArray implements Iterable<Object>, ClusterSerializable {
    */
   public JsonArray(List list) {
     this.list = list;
+  }
+
+  /**
+   * Create an instance from a Buffer of JSON.
+   *
+   * @param buf  the buffer of JSON.
+   */
+  public JsonArray(Buffer buf) {
+    fromBuffer(buf);
   }
 
   /**
@@ -208,6 +207,7 @@ public class JsonArray implements Iterable<Object>, ClusterSerializable {
    * @param pos  the position in the array
    * @return  the byte[], or null if a null value present
    * @throws java.lang.ClassCastException if the value cannot be converted to String
+   * @throws java.lang.IllegalArgumentException if the String value is not a legal Base64 encoded value
    */
   public byte[] getBinary(int pos) {
     String val = (String)list.get(pos);
@@ -221,14 +221,16 @@ public class JsonArray implements Iterable<Object>, ClusterSerializable {
   /**
    * Get the Instant at position {@code pos} in the array.
    * <p>
-   * JSON itself has no notion of a temporal types, so this method assumes there is a String value and
-   * it contains a ISOString encoded date, which it decodes if found and returns.
+   * JSON itself has no notion of a temporal types, this extension complies to the RFC-7493, so this method assumes
+   * there is a String value and it contains an ISO 8601 encoded date and time format such as "2017-04-03T10:25:41Z",
+   * which it decodes if found and returns.
    * <p>
    * This method should be used in conjunction with {@link #add(Instant)}
    *
    * @param pos  the position in the array
    * @return  the Instant, or null if a null value present
    * @throws java.lang.ClassCastException if the value cannot be converted to String
+   * @throws java.time.format.DateTimeParseException if the String value is not a legal ISO 8601 encoded value
    */
   public Instant getInstant(int pos) {
     String val = (String)list.get(pos);
@@ -477,10 +479,17 @@ public class JsonArray implements Iterable<Object>, ClusterSerializable {
    * Remove the value at the specified position in the JSON array.
    *
    * @param pos  the position to remove the value at
-   * @return the removed value if removed, null otherwise
+   * @return the removed value if removed, null otherwise. If the value is a Map, a {@link JsonObject} is built from
+   * this Map and returned. It the value is a List, a {@link JsonArray} is built form this List and returned.
    */
   public Object remove(int pos) {
-    return list.remove(pos);
+    Object removed = list.remove(pos);
+    if (removed instanceof Map) {
+      return new JsonObject((Map) removed);
+    } else if (removed instanceof ArrayList) {
+      return new JsonArray((List) removed);
+    }
+    return removed;
   }
 
   /**
@@ -537,6 +546,15 @@ public class JsonArray implements Iterable<Object>, ClusterSerializable {
    */
   public String encode() {
     return Json.encode(list);
+  }
+
+  /**
+   * Encode this JSON object as buffer.
+   *
+   * @return the buffer encoding.
+   */
+  public Buffer toBuffer() {
+    return Json.encodeToBuffer(list);
   }
 
   /**
@@ -634,6 +652,10 @@ public class JsonArray implements Iterable<Object>, ClusterSerializable {
 
   private void fromJson(String json) {
     list = Json.decodeValue(json, List.class);
+  }
+
+  private void fromBuffer(Buffer buf) {
+    list = Json.decodeValue(buf, List.class);
   }
 
   private class Iter implements Iterator<Object> {

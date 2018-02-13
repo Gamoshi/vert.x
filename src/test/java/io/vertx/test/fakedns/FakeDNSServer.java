@@ -1,17 +1,12 @@
 /*
- * Copyright 2014 Red Hat, Inc.
+ * Copyright (c) 2014 Red Hat, Inc. and others
  *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- * The Eclipse Public License is available at
- * http://www.eclipse.org/legal/epl-v10.html
- *
- * The Apache License v2.0 is available at
- * http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.test.fakedns;
@@ -42,40 +37,57 @@ import org.apache.mina.transport.socket.DatagramAcceptor;
 import org.apache.mina.transport.socket.DatagramSessionConfig;
 
 import java.io.IOException;
-import java.util.HashSet;
-import java.util.Set;
+import java.net.InetSocketAddress;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * @author <a href="mailto:nmaurer@redhat.com">Norman Maurer</a>
  */
 public final class FakeDNSServer extends DnsServer {
 
+  public static RecordStore A_store(Map<String, String> entries) {
+    return questionRecord -> entries.entrySet().stream().map(entry -> {
+      ResourceRecordModifier rm = new ResourceRecordModifier();
+      rm.setDnsClass(RecordClass.IN);
+      rm.setDnsName(entry.getKey());
+      rm.setDnsTtl(100);
+      rm.setDnsType(RecordType.A);
+      rm.put(DnsAttribute.IP_ADDRESS, entry.getValue());
+      return rm.getEntry();
+    }).collect(Collectors.toSet());
+  }
+
   public static final int PORT = 53530;
 
+  private int port = PORT;
   private final RecordStore store;
   private DatagramAcceptor acceptor;
+  private final Deque<DnsMessage> currentMessage = new ArrayDeque<>();
 
-
-  private FakeDNSServer(RecordStore store) {
+  public FakeDNSServer(RecordStore store) {
     this.store = store;
   }
 
-  public static FakeDNSServer testResolveA(final String ipAddress) {
-    return new FakeDNSServer(new RecordStore() {
-      @Override
-      public Set<ResourceRecord> getRecords(QuestionRecord questionRecord) throws org.apache.directory.server.dns.DnsException {
-        Set<ResourceRecord> set = new HashSet<>();
+  public synchronized DnsMessage pollMessage() {
+    return currentMessage.poll();
+  }
 
-        ResourceRecordModifier rm = new ResourceRecordModifier();
-        rm.setDnsClass(RecordClass.IN);
-        rm.setDnsName("dns.vertx.io");
-        rm.setDnsTtl(100);
-        rm.setDnsType(RecordType.A);
-        rm.put(DnsAttribute.IP_ADDRESS, ipAddress);
-        set.add(rm.getEntry());
-        return set;
-      }
-    });
+  public InetSocketAddress localAddress() {
+    return (InetSocketAddress) getTransports()[0].getAcceptor().getLocalAddress();
+  }
+
+  public FakeDNSServer port(int p) {
+    port = p;
+    return this;
+  }
+
+  public static FakeDNSServer testResolveA(final String ipAddress) {
+    return testResolveA(Collections.singletonMap("dns.vertx.io", ipAddress));
+  }
+
+  public static FakeDNSServer testResolveA(Map<String, String> entries) {
+    return new FakeDNSServer(A_store(entries));
   }
 
   public static FakeDNSServer testResolveAAAA(final String ipAddress) {
@@ -279,18 +291,33 @@ public final class FakeDNSServer extends DnsServer {
   }
 
   public static FakeDNSServer testResolveASameServer(final String ipAddress) {
+    return new FakeDNSServer(A_store(Collections.singletonMap("vertx.io", ipAddress)));
+  }
+
+  public static FakeDNSServer testLookup4CNAME(final String cname, final String ip) {
     return new FakeDNSServer(new RecordStore() {
       @Override
-      public Set<ResourceRecord> getRecords(QuestionRecord questionRecord) throws org.apache.directory.server.dns.DnsException {
-        Set<ResourceRecord> set = new HashSet<>();
+      public Set<ResourceRecord> getRecords(QuestionRecord questionRecord)
+          throws org.apache.directory.server.dns.DnsException {
+        // use LinkedHashSet since the order of the result records has to be preserved to make sure the unit test fails
+        Set<ResourceRecord> set = new LinkedHashSet<>();
 
         ResourceRecordModifier rm = new ResourceRecordModifier();
         rm.setDnsClass(RecordClass.IN);
         rm.setDnsName("vertx.io");
         rm.setDnsTtl(100);
-        rm.setDnsType(RecordType.A);
-        rm.put(DnsAttribute.IP_ADDRESS, ipAddress);
+        rm.setDnsType(RecordType.CNAME);
+        rm.put(DnsAttribute.DOMAIN_NAME, cname);
         set.add(rm.getEntry());
+
+        ResourceRecordModifier rm2 = new ResourceRecordModifier();
+        rm2.setDnsClass(RecordClass.IN);
+        rm2.setDnsName(cname);
+        rm2.setDnsTtl(100);
+        rm2.setDnsType(RecordType.A);
+        rm2.put(DnsAttribute.IP_ADDRESS, ip);
+        set.add(rm2.getEntry());
+
         return set;
       }
     });
@@ -298,7 +325,7 @@ public final class FakeDNSServer extends DnsServer {
 
   @Override
   public void start() throws IOException {
-    UdpTransport transport = new UdpTransport("127.0.0.1", PORT);
+    UdpTransport transport = new UdpTransport("127.0.0.1", port);
     setTransports( transport );
 
     acceptor = transport.getAcceptor();
@@ -306,9 +333,18 @@ public final class FakeDNSServer extends DnsServer {
     acceptor.setHandler(new DnsProtocolHandler(this, store) {
       @Override
       public void sessionCreated(IoSession session) throws Exception {
-        // USe our own codec to support AAAA testing
+        // Use our own codec to support AAAA testing
         session.getFilterChain().addFirst("codec",
           new ProtocolCodecFilter(new TestDnsProtocolUdpCodecFactory()));
+      }
+      @Override
+      public void messageReceived(IoSession session, Object message) {
+        if (message instanceof DnsMessage) {
+          synchronized (FakeDNSServer.this) {
+           currentMessage.add((DnsMessage) message);
+          }
+        }
+        super.messageReceived(session, message);
       }
     });
 

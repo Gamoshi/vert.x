@@ -1,17 +1,12 @@
 /*
- * Copyright (c) 2011-2014 The original author or authors
- * ------------------------------------------------------
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * and Apache License v2.0 which accompanies this distribution.
+ * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
  *
- *     The Eclipse Public License is available at
- *     http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
+ * which is available at https://www.apache.org/licenses/LICENSE-2.0.
  *
- *     The Apache License v2.0 is available at
- *     http://www.opensource.org/licenses/apache2.0.php
- *
- * You may elect to redistribute this code under either of these licenses.
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
  */
 
 package io.vertx.core.impl;
@@ -24,29 +19,32 @@ import io.vertx.core.spi.FutureFactory;
  */
 public class FutureFactoryImpl implements FutureFactory {
 
+  private static final SucceededFuture EMPTY = new SucceededFuture<>(null);
+
   @Override
   public <T> Future<T> future() {
     return new FutureImpl<>();
   }
 
-  // TODO - for completed futures with null values we could maybe reuse a static instance to save allocation
   @Override
-  public <T> Future<T> completedFuture() {
-    return new FutureImpl<>((T)null);
+  public <T> Future<T> succeededFuture() {
+    @SuppressWarnings("unchecked")
+    Future<T> fut = EMPTY;
+    return fut;
   }
 
   @Override
-  public <T> Future<T> completedFuture(T result) {
-    return new FutureImpl<>(result);
+  public <T> Future<T> succeededFuture(T result) {
+    return new SucceededFuture<>(result);
   }
 
   @Override
-  public <T> Future<T> completedFuture(Throwable t) {
-    return new FutureImpl<>(t);
+  public <T> Future<T> failedFuture(Throwable t) {
+    return new FailedFuture<>(t);
   }
 
   @Override
-  public <T> Future<T> completedFuture(String failureMessage, boolean failed) {
-    return new FutureImpl<>(failureMessage, true);
+  public <T> Future<T> failureFuture(String failureMessage) {
+    return new FailedFuture<>(failureMessage);
   }
 }
